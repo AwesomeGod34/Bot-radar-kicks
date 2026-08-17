@@ -12,7 +12,7 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 STATE_FILE = Path("seen.json")
 
-BLienteLE_URLS = [
+BLientele_URLS = [
     "https://www.blientele.com/",
     "https://www.blientele.com/collections/all",
     "https://www.blientele.com/search?q=saucony",
@@ -94,6 +94,26 @@ def relevant(text):
     )
 
 
+def has_no_results(text):
+    text = text.lower()
+
+    no_result_phrases = [
+        "0 results",
+        "0 result",
+        "no results",
+        "no result",
+        "aucun résultat",
+        "aucun resultat",
+        "nothing found",
+        "no products found",
+    ]
+
+    return any(
+        phrase in text
+        for phrase in no_result_phrases
+    )
+
+
 def classify(text):
     text = text.lower()
 
@@ -137,7 +157,7 @@ def check_blientele(seen):
 
     print("🛍️ Surveillance directe de Blientele")
 
-    for page_url in BLienteLE_URLS:
+    for page_url in BLientele_URLS:
 
         try:
             response = requests.get(
@@ -159,31 +179,20 @@ def check_blientele(seen):
                 strip=True
             )
 
+            # Ignore les pages de recherche sans résultat.
+            if has_no_results(page_text):
+                print(
+                    "Aucun résultat :",
+                    page_url
+                )
+                continue
+
             # Vérifie le contenu de la page.
             if relevant(page_text):
 
-    # Ignore les pages de recherche sans résultat.
-    no_result_phrases = [
-        "0 results",
-        "0 result",
-        "no results",
-        "no result",
-        "aucun résultat",
-        "aucun resultat",
-    ]
-
-    page_text_lower = page_text.lower()
-
-    if any(
-        phrase in page_text_lower
-        for phrase in no_result_phrases
-    ):
-        continue
-
-    item_id = make_id(
-        page_url + "|" + page_text
-    )
-            
+                item_id = make_id(
+                    page_url + "|" + page_text
+                )
 
                 if item_id not in seen:
                     seen.add(item_id)
@@ -198,7 +207,10 @@ def check_blientele(seen):
                     )
 
             # Vérifie également les liens présents.
-            for link in soup.find_all("a", href=True):
+            for link in soup.find_all(
+                "a",
+                href=True
+            ):
 
                 title = link.get_text(
                     " ",
