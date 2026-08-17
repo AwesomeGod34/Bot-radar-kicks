@@ -3,6 +3,7 @@ name: Awesome God Radar
 on:
   schedule:
     - cron: "*/15 * * * *"
+
   workflow_dispatch:
 
 permissions:
@@ -10,9 +11,11 @@ permissions:
 
 jobs:
   radar:
+
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Recuperer le code
         uses: actions/checkout@v4
 
@@ -29,12 +32,17 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python bot.py
+        run: |
+          python bot.py
 
-      - name: Sauvegarder la memoire du radar
+      - name: Sauvegarder la memoire
         run: |
           git config user.name "Awesome God Radar"
           git config user.email "actions@github.com"
+
           git add seen.json
-          git diff --cached --quiet || git commit -m "Update radar memory"
+
+          git diff --cached --quiet || \
+            git commit -m "Update radar memory"
+
           git push
