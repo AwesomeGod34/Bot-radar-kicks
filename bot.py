@@ -2,38 +2,49 @@ import os
 import json
 import hashlib
 from pathlib import Path
+from datetime import datetime, timezone
 
 import requests
 from bs4 import BeautifulSoup
 
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 STATE_FILE = Path("seen.json")
 
 SEARCHES = [
-    "Saucony Awesome God",
-    '"Awesome God" "Westside Gunn"',
-    '"Saucony" "Westside Gunn"',
+    '"S71047-5"',
+    '"Westside Gunn" "Saucony"',
+    '"Grid Jazz 9" "Awesome Gods"',
+    '"Grid Jazz 9" "Awesome God"',
+    '"Westside Gunn" "Grid Jazz 9"',
+    '"Awesome Gods" sneakers',
 ]
-
-SEARCH_URL = "https://www.google.com/search"
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/17.0 Mobile/15E148 Safari/604.1"
     )
 }
 
+KEYWORDS = [
+    "s71047-5",
+    "awesome gods",
+    "awesome god",
+    "westside gunn",
+    "grid jazz 9",
+]
+
 
 def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
     response = requests.post(
         url,
         data={
-            "chat_id": TELEGRAM_CHAT_ID,
+            "chat_id": CHAT_ID,
             "text": message,
             "disable_web_page_preview": False,
         },
@@ -54,17 +65,22 @@ def load_seen():
 
 
 def save_seen(seen):
-    STATE_FILE.write_text(json.dumps(sorted(seen), indent=2))
+    STATE_FILE.write_text(
+        json.dumps(sorted(seen), indent=2)
+    )
 
 
 def make_id(url):
     return hashlib.sha256(url.encode()).hexdigest()
 
 
-def search_google(query):
+def search_web(query):
     response = requests.get(
-        SEARCH_URL,
-        params={"q": query, "num": 10},
+        "https://www.google.com/search",
+        params={
+            "q": query,
+            "num": 10,
+        },
         headers=HEADERS,
         timeout=20,
     )
@@ -79,25 +95,76 @@ def search_google(query):
         href = link.get("href", "")
         title = link.get_text(" ", strip=True)
 
-        if href.startswith("http") and title:
-            results.append((title, href))
+        if not href.startswith("http"):
+            continue
+
+        if not title:
+            continue
+
+        results.append((title, href))
 
     return results
+
+
+def relevant(title, url):
+    text = (title + " " + url).lower()
+
+    return any(
+        keyword in text
+        for keyword in KEYWORDS
+    )
+
+
+def classify(title, url):
+    text = (title + " " + url).lower()
+
+    if any(word in text for word in [
+        "raffle",
+        "draw",
+        "eql",
+        "entry",
+        "register"
+    ]):
+        return "🔥 RAFFLE / INSCRIPTION"
+
+    if any(word in text for word in [
+        "buy",
+        "shop",
+        "available",
+        "in stock",
+        "preorder",
+        "pre-order"
+    ]):
+        return "🚨 DISPONIBILITÉ POSSIBLE"
+
+    if any(word in text for word in [
+        "release",
+        "drop",
+        "launch",
+        "august 28",
+        "28 august"
+    ]):
+        return "🟠 SORTIE / ANNONCE"
+
+    return "🔵 NOUVELLE INFORMATION"
 
 
 def main():
     seen = load_seen()
     new_results = []
 
+    print("🔎 AWESOME GOD RADAR")
+    print("Heure UTC :", datetime.now(timezone.utc).isoformat())
+
     for query in SEARCHES:
+        print("Recherche :", query)
+
         try:
-            results = search_google(query)
+            results = search_web(query)
 
             for title, url in results:
-                if not any(
-                    keyword.lower() in (title + " " + url).lower()
-                    for keyword in ["saucony", "awesome god", "westside gunn"]
-                ):
+
+                if not relevant(title, url):
                     continue
 
                 item_id = make_id(url)
@@ -106,10 +173,18 @@ def main():
                     continue
 
                 seen.add(item_id)
-                new_results.append((title, url))
+
+                category = classify(title, url)
+
+                new_results.append(
+                    (category, title, url)
+                )
 
         except Exception as error:
-            print(f"Erreur recherche '{query}': {error}")
+            print(
+                f"Erreur pendant la recherche "
+                f"'{query}': {error}"
+            )
 
     save_seen(seen)
 
@@ -117,18 +192,24 @@ def main():
         print("Aucune nouvelle occurrence.")
         return
 
-    for title, url in new_results[:10]:
+    for category, title, url in new_results[:10]:
+
         message = (
             "🚨 AWESOME GOD RADAR 🚨\n\n"
+            f"{category}\n\n"
             f"{title}\n\n"
             f"{url}"
         )
 
         try:
             send_telegram(message)
-            print(f"Alerte envoyée : {url}")
+            print("Alerte Telegram envoyée :", url)
+
         except Exception as error:
-            print(f"Erreur Telegram : {error}")
+            print(
+                "Erreur Telegram :",
+                error
+            )
 
 
 if __name__ == "__main__":
