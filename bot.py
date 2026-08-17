@@ -12,21 +12,37 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 STATE_FILE = Path("seen.json")
 
+BASE_URL = "https://www.blientele.com"
+
+# --------------------------------------------------
+# BLIENTELE : surveillance prioritaire
+# --------------------------------------------------
+
 BLientele_URLS = [
-    "https://www.blientele.com/",
-    "https://www.blientele.com/collections/all",
-    "https://www.blientele.com/search?q=saucony",
-    "https://www.blientele.com/search?q=awesome",
-    "https://www.blientele.com/search?q=grid+jazz",
+    f"{BASE_URL}/",
+    f"{BASE_URL}/collections/all",
+    f"{BASE_URL}/products.json?limit=250",
+    f"{BASE_URL}/collections/all/products.json?limit=250",
+    f"{BASE_URL}/sitemap_products_1.xml",
+    f"{BASE_URL}/search?q=saucony",
+    f"{BASE_URL}/search?q=awesome",
+    f"{BASE_URL}/search?q=grid+jazz",
 ]
+
+# --------------------------------------------------
+# RECHERCHES WEB : filet de sécurité
+# --------------------------------------------------
 
 SEARCHES = [
     '"S71047-5"',
+    '"S71047-5" Saucony',
     '"Westside Gunn" "Saucony"',
     '"Westside Gunn" "Grid Jazz 9"',
     '"Grid Jazz 9" "Awesome Gods"',
     '"Grid Jazz 9" "Awesome God"',
     '"Awesome Gods" sneakers',
+    '"Awesome Gods" Blientele',
+    '"Awesome Gods" release',
 ]
 
 KEYWORDS = [
@@ -47,6 +63,10 @@ HEADERS = {
 }
 
 
+# --------------------------------------------------
+# TELEGRAM
+# --------------------------------------------------
+
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
@@ -63,19 +83,38 @@ def send_telegram(message):
     response.raise_for_status()
 
 
+# --------------------------------------------------
+# MEMOIRE
+# --------------------------------------------------
+
 def load_seen():
     if not STATE_FILE.exists():
-        return set()
+        return {}
 
     try:
-        return set(json.loads(STATE_FILE.read_text()))
+        data = json.loads(
+            STATE_FILE.read_text()
+        )
+
+        if isinstance(data, list):
+            return {
+                item: ""
+                for item in data
+            }
+
+        return data
+
     except Exception:
-        return set()
+        return {}
 
 
 def save_seen(seen):
     STATE_FILE.write_text(
-        json.dumps(sorted(seen), indent=2)
+        json.dumps(
+            seen,
+            indent=2,
+            ensure_ascii=False
+        )
     )
 
 
@@ -84,6 +123,10 @@ def make_id(value):
         value.encode("utf-8")
     ).hexdigest()
 
+
+# --------------------------------------------------
+# FILTRES
+# --------------------------------------------------
 
 def relevant(text):
     text = text.lower()
@@ -97,7 +140,7 @@ def relevant(text):
 def has_no_results(text):
     text = text.lower()
 
-    no_result_phrases = [
+    phrases = [
         "0 results",
         "0 result",
         "no results",
@@ -110,12 +153,23 @@ def has_no_results(text):
 
     return any(
         phrase in text
-        for phrase in no_result_phrases
+        for phrase in phrases
     )
 
 
 def classify(text):
     text = text.lower()
+
+    if any(word in text for word in [
+        "add to cart",
+        "add-to-cart",
+        "buy now",
+        "buy",
+        "available",
+        "in stock",
+        "purchase",
+    ]):
+        return "🚨 DISPONIBILITÉ POSSIBLE"
 
     if any(word in text for word in [
         "raffle",
@@ -128,19 +182,10 @@ def classify(text):
         return "🔥 RAFFLE / INSCRIPTION"
 
     if any(word in text for word in [
-        "add to cart",
-        "add-to-cart",
-        "buy",
-        "available",
-        "in stock",
-        "purchase",
-    ]):
-        return "🚨 DISPONIBILITÉ POSSIBLE"
-
-    if any(word in text for word in [
         "release",
         "drop",
         "launch",
+        "available",
         "august 28",
         "28 august",
         "27 august",
@@ -152,22 +197,145 @@ def classify(text):
     return "🔵 NOUVELLE INFORMATION"
 
 
+# --------------------------------------------------
+# BLIENTELE
+# --------------------------------------------------
+
 def check_blientele(seen):
+
     new_items = []
 
-    print("🛍️ Surveillance directe de Blientele")
+    print("")
+    print("🔥 BLIENTELE EARLY-DROP SCAN")
+    print("")
 
     for page_url in BLientele_URLS:
 
         try:
+
             response = requests.get(
                 page_url,
                 headers=HEADERS,
-                timeout=20,
+                timeout=25,
                 allow_redirects=True,
             )
 
-            response.raise_for_status()
+            print(
+                response.status_code,
+                page_url
+            )
+
+            if response.status_code != 200:
+                continue
+
+            content_type = response.headers.get(
+                "content-type",
+                ""
+            ).lower()
+
+            # --------------------------------------
+            # CAS JSON : products.json
+            # --------------------------------------
+
+            if "json" in content_type:
+
+                try:
+                    data = response.json()
+                except Exception:
+                    continue
+
+                products = data.get(
+                    "products",
+                    []
+                )
+
+                for product in products:
+
+                    title = product.get(
+                        "title",
+                        ""
+                    )
+
+                    handle = product.get(
+                        "handle",
+                        ""
+                    )
+
+                    product_id = str(
+                        product.get(
+                            "id",
+                            handle
+                        )
+                    )
+
+                    product_url = (
+                        f"{BASE_URL}/products/"
+                        f"{handle}"
+                    )
+
+                    variants = product.get(
+                        "variants",
+                        []
+                    )
+
+                    variant_text = " ".join(
+                        str(v)
+                        for v in variants
+                    )
+
+                    combined = (
+                        title
+                        + " "
+                        + handle
+                        + " "
+                        + variant_text
+                    )
+
+                    # Produit totalement hors sujet.
+                    if not relevant(combined):
+                        continue
+
+                    # Identifiant stable du produit.
+                    item_id = (
+                        "blientele-product-"
+                        + product_id
+                    )
+
+                    fingerprint = make_id(
+                        json.dumps(
+                            {
+                                "title": title,
+                                "handle": handle,
+                                "variants": variants,
+                            },
+                            sort_keys=True,
+                            default=str,
+                        )
+                    )
+
+                    previous = seen.get(
+                        item_id
+                    )
+
+                    # Nouveau produit OU modification
+                    if previous != fingerprint:
+
+                        seen[item_id] = fingerprint
+
+                        new_items.append(
+                            (
+                                "🚨 BLIENTELE EARLY DROP",
+                                classify(combined),
+                                product_url,
+                                title,
+                            )
+                        )
+
+                continue
+
+            # --------------------------------------
+            # CAS HTML / XML
+            # --------------------------------------
 
             soup = BeautifulSoup(
                 response.text,
@@ -179,34 +347,52 @@ def check_blientele(seen):
                 strip=True
             )
 
-            # Ignore les pages de recherche sans résultat.
+            # Ignore les recherches vides.
             if has_no_results(page_text):
                 print(
-                    "Aucun résultat :",
+                    "Recherche vide :",
                     page_url
                 )
                 continue
 
-            # Vérifie le contenu de la page.
+            # --------------------------------------
+            # Détection d'une page directement
+            # --------------------------------------
+
             if relevant(page_text):
 
-                item_id = make_id(
-                    page_url + "|" + page_text
+                # On ne mémorise pas tout le contenu
+                # de la page comme identifiant.
+                fingerprint = make_id(
+                    page_text
                 )
 
-                if item_id not in seen:
-                    seen.add(item_id)
+                item_id = (
+                    "blientele-page-"
+                    + make_id(page_url)
+                )
+
+                previous = seen.get(
+                    item_id
+                )
+
+                if previous != fingerprint:
+
+                    seen[item_id] = fingerprint
 
                     new_items.append(
                         (
-                            "🚨 BLIENTELE",
+                            "🚨 BLIENTELE EARLY DROP",
                             classify(page_text),
                             page_url,
-                            page_text[:800],
+                            page_text[:700],
                         )
                     )
 
-            # Vérifie également les liens présents.
+            # --------------------------------------
+            # Détection des liens pertinents
+            # --------------------------------------
+
             for link in soup.find_all(
                 "a",
                 href=True
@@ -221,25 +407,37 @@ def check_blientele(seen):
 
                 if href.startswith("/"):
                     href = (
-                        "https://www.blientele.com"
+                        BASE_URL
                         + href
                     )
 
-                combined = title + " " + href
+                combined = (
+                    title
+                    + " "
+                    + href
+                )
 
                 if not relevant(combined):
                     continue
 
-                item_id = make_id(href)
+                # On ne garde que les liens
+                # réellement intéressants.
+                if "/products/" not in href:
+                    continue
+
+                item_id = (
+                    "blientele-link-"
+                    + make_id(href)
+                )
 
                 if item_id in seen:
                     continue
 
-                seen.add(item_id)
+                seen[item_id] = "detected"
 
                 new_items.append(
                     (
-                        "🚨 BLIENTELE",
+                        "🚨 BLIENTELE EARLY DROP",
                         classify(combined),
                         href,
                         title or href,
@@ -247,15 +445,22 @@ def check_blientele(seen):
                 )
 
         except Exception as error:
+
             print(
-                f"Erreur Blientele {page_url}: "
-                f"{error}"
+                "Erreur Blientele :",
+                page_url,
+                error
             )
 
     return new_items
 
 
+# --------------------------------------------------
+# RECHERCHE WEB
+# --------------------------------------------------
+
 def search_web(query):
+
     response = requests.get(
         "https://www.google.com/search",
         params={
@@ -277,50 +482,77 @@ def search_web(query):
 
     for link in soup.select("a"):
 
-        href = link.get("href", "")
+        href = link.get(
+            "href",
+            ""
+        )
+
         title = link.get_text(
             " ",
             strip=True
         )
 
-        if not href.startswith("http"):
+        if not href.startswith(
+            "http"
+        ):
             continue
 
         if not title:
             continue
 
         results.append(
-            (title, href)
+            (
+                title,
+                href
+            )
         )
 
     return results
 
 
 def check_web(seen):
+
     new_items = []
 
-    print("🌐 Surveillance web")
+    print("")
+    print("🌐 WEB RADAR")
+    print("")
 
     for query in SEARCHES:
 
-        print("Recherche :", query)
+        print(
+            "Recherche :",
+            query
+        )
 
         try:
-            results = search_web(query)
+
+            results = search_web(
+                query
+            )
 
             for title, url in results:
 
-                combined = title + " " + url
+                combined = (
+                    title
+                    + " "
+                    + url
+                )
 
-                if not relevant(combined):
+                if not relevant(
+                    combined
+                ):
                     continue
 
-                item_id = make_id(url)
+                item_id = (
+                    "web-"
+                    + make_id(url)
+                )
 
                 if item_id in seen:
                     continue
 
-                seen.add(item_id)
+                seen[item_id] = "detected"
 
                 new_items.append(
                     (
@@ -332,20 +564,28 @@ def check_web(seen):
                 )
 
         except Exception as error:
+
             print(
-                f"Erreur recherche "
-                f"{query}: {error}"
+                "Erreur recherche :",
+                query,
+                error
             )
 
     return new_items
 
+
+# --------------------------------------------------
+# PROGRAMME PRINCIPAL
+# --------------------------------------------------
 
 def main():
 
     seen = load_seen()
 
     print("")
+    print("==============================")
     print("🚨 AWESOME GOD RADAR 🚨")
+    print("==============================")
     print(
         "UTC :",
         datetime.now(
@@ -356,52 +596,68 @@ def main():
 
     new_items = []
 
-    # Blientele en priorité.
+    # BLIENTELE EN PREMIER.
     new_items.extend(
-        check_blientele(seen)
+        check_blientele(
+            seen
+        )
     )
 
-    # Recherche web en complément.
+    # WEB EN COMPLEMENT.
     new_items.extend(
-        check_web(seen)
+        check_web(
+            seen
+        )
     )
 
     save_seen(seen)
 
     if not new_items:
+
+        print("")
         print(
-            "Aucune nouvelle occurrence."
+            "✅ Aucune nouvelle occurrence."
         )
         return
 
+    print("")
     print(
-        f"{len(new_items)} "
-        "nouvelle(s) occurrence(s)."
+        "🚨",
+        len(new_items),
+        "nouvelle(s) occurrence(s)"
     )
 
-    # Maximum 10 alertes par exécution.
-    for source, category, url, details in new_items[:10]:
+    # Maximum 10 alertes par passage.
+    for (
+        source,
+        category,
+        url,
+        details
+    ) in new_items[:10]:
 
         message = (
             "🚨 AWESOME GOD RADAR 🚨\n\n"
             f"{source}\n"
             f"{category}\n\n"
-            f"{details[:500]}\n\n"
+            f"{details[:600]}\n\n"
             f"🔗 {url}"
         )
 
         try:
-            send_telegram(message)
+
+            send_telegram(
+                message
+            )
 
             print(
-                "Telegram envoyé :",
+                "📲 Telegram envoyé :",
                 url
             )
 
         except Exception as error:
 
             print(
-                "Erreur Telegram :",
+                "❌ Erreur Telegram :",
                 error
             )
 
