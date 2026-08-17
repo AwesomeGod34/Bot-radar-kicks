@@ -15,10 +15,31 @@ STATE_FILE = Path("seen.json")
 SEARCHES = [
     '"S71047-5"',
     '"Westside Gunn" "Saucony"',
+    '"Westside Gunn" "Grid Jazz 9"',
     '"Grid Jazz 9" "Awesome Gods"',
     '"Grid Jazz 9" "Awesome God"',
-    '"Westside Gunn" "Grid Jazz 9"',
     '"Awesome Gods" sneakers',
+]
+
+# Sources particulièrement importantes pour cette paire.
+PRIORITY_DOMAINS = [
+    "saucony.com",
+    "eql.com",
+    "blientele.com",
+    "sneakernews.com",
+    "soleretriever.com",
+    "sneakerbardetroit.com",
+    "sneakerfreaker.com",
+    "thesolesupplier.co.uk",
+    "thedropdate.com",
+]
+
+KEYWORDS = [
+    "s71047-5",
+    "awesome gods",
+    "awesome god",
+    "westside gunn",
+    "grid jazz 9",
 ]
 
 HEADERS = {
@@ -28,14 +49,6 @@ HEADERS = {
         "Version/17.0 Mobile/15E148 Safari/604.1"
     )
 }
-
-KEYWORDS = [
-    "s71047-5",
-    "awesome gods",
-    "awesome god",
-    "westside gunn",
-    "grid jazz 9",
-]
 
 
 def send_telegram(message):
@@ -123,7 +136,8 @@ def classify(title, url):
         "draw",
         "eql",
         "entry",
-        "register"
+        "register",
+        "registration",
     ]):
         return "🔥 RAFFLE / INSCRIPTION"
 
@@ -133,7 +147,8 @@ def classify(title, url):
         "available",
         "in stock",
         "preorder",
-        "pre-order"
+        "pre-order",
+        "purchase",
     ]):
         return "🚨 DISPONIBILITÉ POSSIBLE"
 
@@ -142,11 +157,22 @@ def classify(title, url):
         "drop",
         "launch",
         "august 28",
-        "28 august"
+        "28 august",
+        "28/08",
     ]):
         return "🟠 SORTIE / ANNONCE"
 
     return "🔵 NOUVELLE INFORMATION"
+
+
+def source_priority(url):
+    url_lower = url.lower()
+
+    for domain in PRIORITY_DOMAINS:
+        if domain in url_lower:
+            return "⭐ SOURCE PRIORITAIRE"
+
+    return "🌐 AUTRE SOURCE"
 
 
 def main():
@@ -154,7 +180,10 @@ def main():
     new_results = []
 
     print("🔎 AWESOME GOD RADAR")
-    print("Heure UTC :", datetime.now(timezone.utc).isoformat())
+    print(
+        "Heure UTC :",
+        datetime.now(timezone.utc).isoformat()
+    )
 
     for query in SEARCHES:
         print("Recherche :", query)
@@ -175,15 +204,20 @@ def main():
                 seen.add(item_id)
 
                 category = classify(title, url)
+                priority = source_priority(url)
 
                 new_results.append(
-                    (category, title, url)
+                    (
+                        category,
+                        priority,
+                        title,
+                        url,
+                    )
                 )
 
         except Exception as error:
             print(
-                f"Erreur pendant la recherche "
-                f"'{query}': {error}"
+                f"Erreur recherche '{query}': {error}"
             )
 
     save_seen(seen)
@@ -192,18 +226,22 @@ def main():
         print("Aucune nouvelle occurrence.")
         return
 
-    for category, title, url in new_results[:10]:
+    for category, priority, title, url in new_results[:10]:
 
         message = (
             "🚨 AWESOME GOD RADAR 🚨\n\n"
-            f"{category}\n\n"
+            f"{category}\n"
+            f"{priority}\n\n"
             f"{title}\n\n"
             f"{url}"
         )
 
         try:
             send_telegram(message)
-            print("Alerte Telegram envoyée :", url)
+            print(
+                "Alerte Telegram envoyée :",
+                url
+            )
 
         except Exception as error:
             print(
