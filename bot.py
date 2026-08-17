@@ -12,6 +12,14 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 STATE_FILE = Path("seen.json")
 
+BLienteLE_URLS = [
+    "https://www.blientele.com/",
+    "https://www.blientele.com/collections/all",
+    "https://www.blientele.com/search?q=saucony",
+    "https://www.blientele.com/search?q=awesome",
+    "https://www.blientele.com/search?q=grid+jazz",
+]
+
 SEARCHES = [
     '"S71047-5"',
     '"Westside Gunn" "Saucony"',
@@ -21,25 +29,13 @@ SEARCHES = [
     '"Awesome Gods" sneakers',
 ]
 
-# Sources particulièrement importantes pour cette paire.
-PRIORITY_DOMAINS = [
-    "saucony.com",
-    "eql.com",
-    "blientele.com",
-    "sneakernews.com",
-    "soleretriever.com",
-    "sneakerbardetroit.com",
-    "sneakerfreaker.com",
-    "thesolesupplier.co.uk",
-    "thedropdate.com",
-]
-
 KEYWORDS = [
     "s71047-5",
     "awesome gods",
     "awesome god",
     "westside gunn",
     "grid jazz 9",
+    "saucony",
 ]
 
 HEADERS = {
@@ -83,8 +79,149 @@ def save_seen(seen):
     )
 
 
-def make_id(url):
-    return hashlib.sha256(url.encode()).hexdigest()
+def make_id(value):
+    return hashlib.sha256(
+        value.encode("utf-8")
+    ).hexdigest()
+
+
+def relevant(text):
+    text = text.lower()
+
+    return any(
+        keyword in text
+        for keyword in KEYWORDS
+    )
+
+
+def classify(text):
+    text = text.lower()
+
+    if any(word in text for word in [
+        "raffle",
+        "draw",
+        "eql",
+        "entry",
+        "register",
+        "registration",
+    ]):
+        return "🔥 RAFFLE / INSCRIPTION"
+
+    if any(word in text for word in [
+        "add to cart",
+        "add-to-cart",
+        "buy",
+        "available",
+        "in stock",
+        "purchase",
+    ]):
+        return "🚨 DISPONIBILITÉ POSSIBLE"
+
+    if any(word in text for word in [
+        "release",
+        "drop",
+        "launch",
+        "august 28",
+        "28 august",
+        "27 august",
+        "27 août",
+        "28 août",
+    ]):
+        return "🟠 SORTIE / ANNONCE"
+
+    return "🔵 NOUVELLE INFORMATION"
+
+
+def check_blientele(seen):
+    new_items = []
+
+    print("🛍️ Surveillance directe de Blientele")
+
+    for page_url in BLienteLE_URLS:
+
+        try:
+            response = requests.get(
+                page_url,
+                headers=HEADERS,
+                timeout=20,
+                allow_redirects=True,
+            )
+
+            response.raise_for_status()
+
+            soup = BeautifulSoup(
+                response.text,
+                "html.parser"
+            )
+
+            page_text = soup.get_text(
+                " ",
+                strip=True
+            )
+
+            # Vérifie le contenu de la page.
+            if relevant(page_text):
+
+                item_id = make_id(
+                    page_url + "|" + page_text
+                )
+
+                if item_id not in seen:
+                    seen.add(item_id)
+
+                    new_items.append(
+                        (
+                            "🚨 BLIENTELE",
+                            classify(page_text),
+                            page_url,
+                            page_text[:800],
+                        )
+                    )
+
+            # Vérifie également les liens présents.
+            for link in soup.find_all("a", href=True):
+
+                title = link.get_text(
+                    " ",
+                    strip=True
+                )
+
+                href = link["href"]
+
+                if href.startswith("/"):
+                    href = (
+                        "https://www.blientele.com"
+                        + href
+                    )
+
+                combined = title + " " + href
+
+                if not relevant(combined):
+                    continue
+
+                item_id = make_id(href)
+
+                if item_id in seen:
+                    continue
+
+                seen.add(item_id)
+
+                new_items.append(
+                    (
+                        "🚨 BLIENTELE",
+                        classify(combined),
+                        href,
+                        title or href,
+                    )
+                )
+
+        except Exception as error:
+            print(
+                f"Erreur Blientele {page_url}: "
+                f"{error}"
+            )
+
+    return new_items
 
 
 def search_web(query):
@@ -100,13 +237,20 @@ def search_web(query):
 
     response.raise_for_status()
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser"
+    )
 
     results = []
 
     for link in soup.select("a"):
+
         href = link.get("href", "")
-        title = link.get_text(" ", strip=True)
+        title = link.get_text(
+            " ",
+            strip=True
+        )
 
         if not href.startswith("http"):
             continue
@@ -114,78 +258,20 @@ def search_web(query):
         if not title:
             continue
 
-        results.append((title, href))
+        results.append(
+            (title, href)
+        )
 
     return results
 
 
-def relevant(title, url):
-    text = (title + " " + url).lower()
+def check_web(seen):
+    new_items = []
 
-    return any(
-        keyword in text
-        for keyword in KEYWORDS
-    )
-
-
-def classify(title, url):
-    text = (title + " " + url).lower()
-
-    if any(word in text for word in [
-        "raffle",
-        "draw",
-        "eql",
-        "entry",
-        "register",
-        "registration",
-    ]):
-        return "🔥 RAFFLE / INSCRIPTION"
-
-    if any(word in text for word in [
-        "buy",
-        "shop",
-        "available",
-        "in stock",
-        "preorder",
-        "pre-order",
-        "purchase",
-    ]):
-        return "🚨 DISPONIBILITÉ POSSIBLE"
-
-    if any(word in text for word in [
-        "release",
-        "drop",
-        "launch",
-        "august 28",
-        "28 august",
-        "28/08",
-    ]):
-        return "🟠 SORTIE / ANNONCE"
-
-    return "🔵 NOUVELLE INFORMATION"
-
-
-def source_priority(url):
-    url_lower = url.lower()
-
-    for domain in PRIORITY_DOMAINS:
-        if domain in url_lower:
-            return "⭐ SOURCE PRIORITAIRE"
-
-    return "🌐 AUTRE SOURCE"
-
-
-def main():
-    seen = load_seen()
-    new_results = []
-
-    print("🔎 AWESOME GOD RADAR")
-    print(
-        "Heure UTC :",
-        datetime.now(timezone.utc).isoformat()
-    )
+    print("🌐 Surveillance web")
 
     for query in SEARCHES:
+
         print("Recherche :", query)
 
         try:
@@ -193,7 +279,9 @@ def main():
 
             for title, url in results:
 
-                if not relevant(title, url):
+                combined = title + " " + url
+
+                if not relevant(combined):
                     continue
 
                 item_id = make_id(url)
@@ -203,47 +291,84 @@ def main():
 
                 seen.add(item_id)
 
-                category = classify(title, url)
-                priority = source_priority(url)
-
-                new_results.append(
+                new_items.append(
                     (
-                        category,
-                        priority,
-                        title,
+                        "🌐 WEB",
+                        classify(combined),
                         url,
+                        title,
                     )
                 )
 
         except Exception as error:
             print(
-                f"Erreur recherche '{query}': {error}"
+                f"Erreur recherche "
+                f"{query}: {error}"
             )
+
+    return new_items
+
+
+def main():
+
+    seen = load_seen()
+
+    print("")
+    print("🚨 AWESOME GOD RADAR 🚨")
+    print(
+        "UTC :",
+        datetime.now(
+            timezone.utc
+        ).isoformat()
+    )
+    print("")
+
+    new_items = []
+
+    # Blientele en priorité.
+    new_items.extend(
+        check_blientele(seen)
+    )
+
+    # Recherche web en complément.
+    new_items.extend(
+        check_web(seen)
+    )
 
     save_seen(seen)
 
-    if not new_results:
-        print("Aucune nouvelle occurrence.")
+    if not new_items:
+        print(
+            "Aucune nouvelle occurrence."
+        )
         return
 
-    for category, priority, title, url in new_results[:10]:
+    print(
+        f"{len(new_items)} "
+        "nouvelle(s) occurrence(s)."
+    )
+
+    # Maximum 10 alertes par exécution.
+    for source, category, url, details in new_items[:10]:
 
         message = (
             "🚨 AWESOME GOD RADAR 🚨\n\n"
-            f"{category}\n"
-            f"{priority}\n\n"
-            f"{title}\n\n"
-            f"{url}"
+            f"{source}\n"
+            f"{category}\n\n"
+            f"{details[:500]}\n\n"
+            f"🔗 {url}"
         )
 
         try:
             send_telegram(message)
+
             print(
-                "Alerte Telegram envoyée :",
+                "Telegram envoyé :",
                 url
             )
 
         except Exception as error:
+
             print(
                 "Erreur Telegram :",
                 error
