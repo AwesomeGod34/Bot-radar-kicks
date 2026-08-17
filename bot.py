@@ -162,9 +162,28 @@ def check_blientele(seen):
             # Vérifie le contenu de la page.
             if relevant(page_text):
 
-                item_id = make_id(
-                    page_url + "|" + page_text
-                )
+    # Ignore les pages de recherche sans résultat.
+    no_result_phrases = [
+        "0 results",
+        "0 result",
+        "no results",
+        "no result",
+        "aucun résultat",
+        "aucun resultat",
+    ]
+
+    page_text_lower = page_text.lower()
+
+    if any(
+        phrase in page_text_lower
+        for phrase in no_result_phrases
+    ):
+        continue
+
+    item_id = make_id(
+        page_url + "|" + page_text
+    )
+            
 
                 if item_id not in seen:
                     seen.add(item_id)
