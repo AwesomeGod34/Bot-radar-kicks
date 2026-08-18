@@ -1,1 +1,15 @@
-[]
+[
+  {
+    "post_key": "TEST-TELEGRAM-001",
+    "source": "X",
+    "priority": "🔴 CRITIQUE",
+    "terms": [
+      "awesome gods",
+      "saucony"
+    ],
+    "excerpt": "TEST — Awesome Gods / Saucony — ceci est une alerte de test Telegram.",
+    "url": "https://x.com/WESTSIDEGUNN",
+    "post_id": "TEST-001",
+    "detected_at": "2026-08-19T00:00:00+00:00"
+  }
+]
