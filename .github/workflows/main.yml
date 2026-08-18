@@ -25,6 +25,10 @@ jobs:
       - name: Installer les dependances
         run: |
           pip install requests beautifulsoup4
+          - name: Tester Saucony
+          
+        run: |
+          python saucony_radar.py
 
       - name: Lancer le radar
         env:
