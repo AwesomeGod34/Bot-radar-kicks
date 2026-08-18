@@ -44,7 +44,7 @@ jobs:
         run: |
           python westside_radar.py
 
-      - name: Lancer le radar
+      - name: Lancer le radar Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -56,7 +56,7 @@ jobs:
           git config user.name "Awesome God Radar"
           git config user.email "actions@github.com"
 
-          git add seen.json westside_seen.json
+          git add seen.json westside_seen.json westside_alerts.json
 
           git diff --cached --quiet || \
             git commit -m "Update radar memory"
