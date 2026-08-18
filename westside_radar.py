@@ -9,19 +9,35 @@ from bs4 import BeautifulSoup
 
 MEMORY_FILE = Path("westside_seen.json")
 
+X_URL = "https://x.com/WESTSIDEGUNN"
+INSTAGRAM_URL = "https://www.instagram.com/westsidegunn/"
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0 Safari/537.36"
+    ),
+    "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+}
+
+# Termes directement liés à notre sortie
 STRONG_TERMS = [
     "s71047-5",
     "awesome gods",
-    "awesome god",
     "grid jazz 9",
 ]
 
+# Termes utiles mais moins précis
 IMPORTANT_TERMS = [
     "saucony",
+    "sauconyorigs",
     "blientele",
 ]
 
+# Termes d'action
 ACTION_TERMS = [
+    "release",
     "release details",
     "release date",
     "dropping",
@@ -34,20 +50,6 @@ ACTION_TERMS = [
     "8.28",
     "28 août",
 ]
-
-SOURCES = {
-    "Instagram": "https://www.instagram.com/westsidegunn/",
-    "X": "https://x.com/WESTSIDEGUNN",
-}
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0 Safari/537.36"
-    ),
-    "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
-}
 
 
 def normalise(text):
@@ -69,7 +71,7 @@ def load_memory():
             return set(data)
 
     except Exception as error:
-        print(f"⚠️ Erreur mémoire : {error}")
+        print(f"⚠️ Erreur lecture mémoire : {error}")
 
     return set()
 
@@ -85,9 +87,10 @@ def save_memory(memory):
     )
 
 
-def fingerprint(source, content):
-    raw = f"{source}|{content}".encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
+def make_id(content):
+    return hashlib.sha256(
+        normalise(content).encode("utf-8")
+    ).hexdigest()
 
 
 def find_terms(text):
@@ -108,83 +111,88 @@ def find_terms(text):
     return list(dict.fromkeys(matches))
 
 
-def priority(matches):
-    has_strong = any(
-        term in matches for term in STRONG_TERMS
+def calculate_priority(matches):
+    strong = any(
+        term in matches
+        for term in STRONG_TERMS
     )
 
-    has_important = any(
-        term in matches for term in IMPORTANT_TERMS
+    saucony = any(
+        term in matches
+        for term in IMPORTANT_TERMS
     )
 
-    has_action = any(
-        term in matches for term in ACTION_TERMS
+    action = any(
+        term in matches
+        for term in ACTION_TERMS
     )
 
-    if has_strong and has_action:
+    # Référence exacte ou nom de la paire + action
+    if strong and action:
         return "🔴 CRITIQUE"
 
-    if has_strong:
+    # Référence exacte / nom de paire
+    if strong:
         return "🟠 IMPORTANT"
 
-    if has_important and has_action:
+    # Saucony + action
+    if saucony and action:
         return "🟠 IMPORTANT"
 
-    if has_important:
+    # Saucony seul
+    if saucony:
         return "🟡 À SURVEILLER"
 
-    return "⚪ FAIBLE"
+    return "⚪ IGNORÉ"
 
 
-def extract_relevant_blocks(soup):
+def is_relevant(text):
     """
-    Extrait des blocs textuels contenant au moins un
-    mot-clé intéressant.
-
-    On ne mémorise plus toute la page.
+    Évite les faux positifs.
     """
 
-    blocks = []
+    strong = any(
+        term in text
+        for term in STRONG_TERMS
+    )
 
-    for element in soup.find_all(
-        ["article", "div", "li", "p", "span"]
-    ):
-        text = normalise(
-            element.get_text(" ", strip=True)
-        )
+    saucony = any(
+        term in text
+        for term in IMPORTANT_TERMS
+    )
 
-        if not text:
-            continue
+    action = any(
+        term in text
+        for term in ACTION_TERMS
+    )
 
-        terms = find_terms(text)
+    # La référence exacte suffit
+    if "s71047-5" in text:
+        return True
 
-        if not terms:
-            continue
+    # Un nom de paire seul est pertinent
+    if "awesome gods" in text:
+        return True
 
-        # Évite de conserver des blocs gigantesques.
-        if len(text) > 1500:
-            text = text[:1500]
+    if "grid jazz 9" in text:
+        return True
 
-        blocks.append(text)
+    # Saucony doit être accompagné d'un élément
+    # d'action pour devenir pertinent
+    if saucony and action:
+        return True
 
-    # Suppression des doublons
-    unique_blocks = []
-
-    for block in blocks:
-        if block not in unique_blocks:
-            unique_blocks.append(block)
-
-    return unique_blocks
+    return False
 
 
-def analyse_source(name, url, memory):
+def analyse_x(memory):
     print()
-    print(f"🌐 Source : {name}")
-    print(f"🔗 {url}")
+    print("🌐 Source : X")
+    print(f"🔗 {X_URL}")
 
     try:
         response = requests.get(
-            url,
+            X_URL,
             headers=HEADERS,
             timeout=20,
         )
@@ -194,7 +202,7 @@ def analyse_source(name, url, memory):
         response.raise_for_status()
 
     except requests.RequestException as error:
-        print(f"⚠️ Source inaccessible : {error}")
+        print(f"⚠️ X inaccessible : {error}")
         return 0
 
     soup = BeautifulSoup(
@@ -202,72 +210,181 @@ def analyse_source(name, url, memory):
         "html.parser",
     )
 
-    blocks = extract_relevant_blocks(soup)
+    # X utilise actuellement des balises article
+    # pour ses publications lorsqu'elles sont exposées.
+    articles = soup.find_all("article")
 
-    if not blocks:
-        print("⚪ Aucun bloc pertinent détecté")
+    if not articles:
+        print("⚠️ Aucun article X identifiable")
         return 0
 
-    new_blocks = 0
+    print(f"📰 Publications détectées : {len(articles)}")
 
-    for block in blocks:
+    new_signals = 0
 
-        terms = find_terms(block)
+    for article in articles:
 
-        block_id = fingerprint(
-            name,
-            block,
+        text = normalise(
+            article.get_text(
+                " ",
+                strip=True,
+            )
         )
 
-        if block_id in memory:
+        if not text:
             continue
 
-        memory.add(block_id)
+        if not is_relevant(text):
+            continue
 
-        new_blocks += 1
+        matches = find_terms(text)
 
-        level = priority(terms)
+        # Ignore les simples mentions génériques
+        if not matches:
+            continue
+
+        post_id = make_id(text)
+
+        if post_id in memory:
+            continue
+
+        memory.add(post_id)
+
+        level = calculate_priority(matches)
 
         print()
-        print("🆕 NOUVEAU CONTENU")
+        print("🆕 NOUVELLE PUBLICATION PERTINENTE")
         print(f"🚨 Priorité : {level}")
 
-        print("🔎 Mots-clés :")
-        for term in terms:
+        print("🔎 Termes détectés :")
+
+        for term in matches:
             print(f"   • {term}")
 
         print("📝 Extrait :")
-        print(f"   {block[:500]}")
+        print(f"   {text[:700]}")
 
-    if new_blocks == 0:
-        print("♻️ Aucun nouveau contenu pertinent")
+        new_signals += 1
 
-    return new_blocks
+    if new_signals == 0:
+        print(
+            "♻️ Aucun nouveau post pertinent détecté"
+        )
+
+    return new_signals
+
+
+def analyse_instagram(memory):
+    print()
+    print("🌐 Source : Instagram")
+    print(f"🔗 {INSTAGRAM_URL}")
+
+    try:
+        response = requests.get(
+            INSTAGRAM_URL,
+            headers=HEADERS,
+            timeout=20,
+        )
+
+        print(f"📡 HTTP : {response.status_code}")
+
+        if response.status_code == 429:
+            print(
+                "⏳ Instagram limite actuellement "
+                "les requêtes (429)"
+            )
+            print(
+                "ℹ️ Instagram sera simplement ignoré "
+                "pour ce passage."
+            )
+            return 0
+
+        response.raise_for_status()
+
+    except requests.RequestException as error:
+        print(f"⚠️ Instagram inaccessible : {error}")
+        return 0
+
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser",
+    )
+
+    text = normalise(
+        soup.get_text(
+            " ",
+            strip=True,
+        )
+    )
+
+    if not text:
+        print("⚪ Aucun contenu public exploitable")
+        return 0
+
+    matches = find_terms(text)
+
+    # Instagram n'est utilisé ici que comme
+    # source complémentaire.
+    if not matches:
+        print("⚪ Aucun signal Instagram")
+        return 0
+
+    # On ne mémorise pas toute la page Instagram.
+    relevant = [
+        term
+        for term in matches
+        if term in STRONG_TERMS
+    ]
+
+    if not relevant:
+        print(
+            "⚪ Aucun signal Instagram suffisamment "
+            "précis"
+        )
+        return 0
+
+    content = "|".join(sorted(relevant))
+    post_id = make_id(
+        f"instagram|{content}"
+    )
+
+    if post_id in memory:
+        print("♻️ Signal Instagram déjà connu")
+        return 0
+
+    memory.add(post_id)
+
+    print("🆕 SIGNAL INSTAGRAM")
+    print("🔎 Termes :")
+
+    for term in relevant:
+        print(f"   • {term}")
+
+    return 1
 
 
 def main():
     print("🔎 WESTSIDE GUNN RADAR")
-    print("🎯 Surveillance publique Instagram + X")
-    print("🎯 Référence : S71047-5")
+    print("🎯 X + Instagram")
+    print("🎯 Surveillance de la sortie S71047-5")
     print()
 
     memory = load_memory()
 
     total_new = 0
 
-    for name, url in SOURCES.items():
-        total_new += analyse_source(
-            name,
-            url,
-            memory,
-        )
+    # X = source principale
+    total_new += analyse_x(memory)
+
+    # Instagram = source secondaire
+    total_new += analyse_instagram(memory)
 
     save_memory(memory)
 
     print()
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("📊 Résultat Westside Gunn")
-    print(f"Nouveaux blocs : {total_new}")
+    print(f"Nouveaux signaux : {total_new}")
 
     if total_new:
         print("🚨 NOUVEAU SIGNAL DÉTECTÉ")
