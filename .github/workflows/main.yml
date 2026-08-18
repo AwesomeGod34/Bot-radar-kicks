@@ -25,8 +25,12 @@ jobs:
       - name: Installer les dependances
         run: |
           pip install requests beautifulsoup4
-          - name: Tester Saucony
-          
+
+      - name: Tester Blientele
+        run: |
+          python blientele_cart.py
+
+      - name: Tester Saucony
         run: |
           python saucony_radar.py
 
@@ -36,10 +40,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python bot.py
-
-      - name: Tester Blientele
-        run: |
-          python blientele_cart.py
 
       - name: Sauvegarder la memoire
         run: |
