@@ -1,7 +1,7 @@
 import requests
-import re
 
-BLIEANTELE_URL = "https://www.blientele.com/collections/all"
+SHOP_URL = "https://www.blientele.com"
+PRODUCTS_URL = f"{SHOP_URL}/products.json?limit=250"
 
 SEARCH_TERMS = [
     "awesome gods",
@@ -14,9 +14,9 @@ SEARCH_TERMS = [
 TARGET_SIZE = "44.5"
 
 
-def get_blientele_products():
+def get_products():
     response = requests.get(
-        BLIEANTELE_URL,
+        PRODUCTS_URL,
         timeout=20,
         headers={
             "User-Agent": (
@@ -27,39 +27,86 @@ def get_blientele_products():
     )
 
     response.raise_for_status()
-    return response.text
+
+    data = response.json()
+    return data.get("products", [])
 
 
-def find_target(html):
-    text = re.sub(r"<[^>]+>", " ", html)
-    text = re.sub(r"\s+", " ", text).lower()
+def product_matches(product):
+    text = (
+        product.get("title", "")
+        + " "
+        + product.get("handle", "")
+        + " "
+        + product.get("vendor", "")
+    ).lower()
 
-    matches = []
+    return any(term in text for term in SEARCH_TERMS)
 
-    for term in SEARCH_TERMS:
-        if term in text:
-            matches.append(term)
 
-    return matches
+def inspect_product(product):
+    print()
+    print("🚨 PRODUIT POTENTIEL DÉTECTÉ")
+    print(f"Nom : {product.get('title')}")
+    print(f"Handle : {product.get('handle')}")
+    print(f"ID produit : {product.get('id')}")
+
+    variants = product.get("variants", [])
+
+    if not variants:
+        print("⚠️ Aucune variante trouvée")
+        return
+
+    print(f"Nombre de variantes : {len(variants)}")
+
+    found_size = False
+
+    for variant in variants:
+        size = str(variant.get("title", "")).strip()
+
+        print(
+            f"  Variante : {size} | "
+            f"ID : {variant.get('id')} | "
+            f"Disponible : {variant.get('available')}"
+        )
+
+        normalized = size.replace(",", ".").lower()
+
+        if normalized in ("44.5", "44.5 eu", "eu 44.5"):
+            found_size = True
+
+            if variant.get("available"):
+                print("🟢 TAILLE 44,5 DISPONIBLE")
+            else:
+                print("🔴 TAILLE 44,5 EXISTE MAIS INDISPONIBLE")
+
+    if not found_size:
+        print("⚪ Taille 44,5 non trouvée")
 
 
 def main():
-    print("🔎 Surveillance Blientele")
+    print("🔎 Blientele — détecteur catalogue")
     print(f"🎯 Taille cible : EU {TARGET_SIZE}")
 
     try:
-        html = get_blientele_products()
+        products = get_products()
 
-        matches = find_target(html)
+        print(f"📦 Produits trouvés : {len(products)}")
 
-        if matches:
-            print("🚨 OCCURRENCE DÉTECTÉE")
-            print("Mots-clés trouvés :", ", ".join(matches))
-        else:
-            print("✅ Aucun produit Awesome Gods détecté")
+        matches = [
+            product for product in products
+            if product_matches(product)
+        ]
 
-    except Exception as e:
-        print(f"❌ Erreur Blientele : {e}")
+        if not matches:
+            print("✅ Aucun produit correspondant détecté")
+            return
+
+        for product in matches:
+            inspect_product(product)
+
+    except Exception as error:
+        print(f"❌ Erreur Blientele : {error}")
 
 
 if __name__ == "__main__":
