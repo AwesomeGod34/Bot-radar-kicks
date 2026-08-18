@@ -1,4 +1,3 @@
-```python
 import os
 import json
 import hashlib
@@ -7,10 +6,6 @@ from datetime import datetime, timezone
 
 import requests
 
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
 
 SHOP_URL = "https://www.blientele.com"
 PRODUCTS_URL = f"{SHOP_URL}/products.json?limit=250"
@@ -61,11 +56,11 @@ def load_memory():
 
     if not MEMORY_FILE.exists():
         return {
-            "products": []
+            "products": [],
+            "fingerprints": {}
         }
 
     try:
-
         data = json.loads(
             MEMORY_FILE.read_text(
                 encoding="utf-8"
@@ -73,16 +68,18 @@ def load_memory():
         )
 
         if isinstance(data, dict):
+            data.setdefault("products", [])
+            data.setdefault("fingerprints", {})
             return data
 
     except Exception as error:
-
         print(
             f"⚠️ Erreur mémoire : {error}"
         )
 
     return {
-        "products": []
+        "products": [],
+        "fingerprints": {}
     }
 
 
@@ -154,7 +151,7 @@ def send_telegram(message):
 
 
 # ============================================================
-# CATALOGUE
+# CATALOGUE BLIENTELE
 # ============================================================
 
 def get_products():
@@ -183,7 +180,7 @@ def get_products():
     except ValueError as error:
 
         raise RuntimeError(
-            "Réponse catalogue non JSON"
+            "La réponse Blientele n'est pas du JSON."
         ) from error
 
     products = data.get(
@@ -201,7 +198,7 @@ def get_products():
 
 
 # ============================================================
-# DETECTION PRODUIT
+# RECHERCHE PRODUIT
 # ============================================================
 
 def searchable_text(product):
@@ -234,7 +231,7 @@ def product_matches(product):
 
 
 # ============================================================
-# TAILLES
+# NORMALISATION DES TAILLES
 # ============================================================
 
 def normalize_size(value):
@@ -251,40 +248,42 @@ def normalize_size(value):
         .strip()
     )
 
+    text = " ".join(
+        text.split()
+    )
+
     return text
 
 
 def is_target_size(variant):
 
-    title = normalize_size(
-        variant.get("title", "")
-    )
+    values = [
+        variant.get("title", ""),
+        variant.get("option1", ""),
+        variant.get("option2", ""),
+        variant.get("option3", ""),
+    ]
 
-    option1 = normalize_size(
-        variant.get("option1", "")
-    )
-
-    candidates = {
-        title,
-        option1,
+    normalized_values = {
+        normalize_size(value)
+        for value in values
+        if value
     }
 
-    for value in candidates:
+    target_values = {
+        "44.5",
+        "10.5",
+        "us 10.5",
+        "us10.5",
+        "44.5 us",
+        "eu 44.5",
+        "44.5 eu",
+    }
 
-        if value in {
-            "44.5",
-            "10.5",
-        }:
-            return True
-
-        if value in {
-            "44.5 us",
-            "us 10.5",
-            "us10.5",
-        }:
-            return True
-
-    return False
+    return bool(
+        normalized_values
+        & target_values
+    )
 
 
 def find_target_variants(product):
@@ -329,7 +328,7 @@ def product_url(product):
 
 
 # ============================================================
-# PREPARATION PANIER
+# PREPARATION DU LIEN PANIER
 # ============================================================
 
 def build_cart_url(variant):
@@ -341,15 +340,6 @@ def build_cart_url(variant):
     if not variant_id:
         return None
 
-    """
-    Shopify expose souvent une route de panier
-    basée sur l'identifiant de variante.
-
-    Cette URL est uniquement préparée pour
-    permettre à l'utilisateur d'ouvrir le panier.
-    Elle ne déclenche aucun paiement.
-    """
-
     return (
         f"{SHOP_URL}/cart/"
         f"{variant_id}:1"
@@ -357,7 +347,7 @@ def build_cart_url(variant):
 
 
 # ============================================================
-# INSPECTION
+# INSPECTION DU PRODUIT
 # ============================================================
 
 def inspect_product(product):
@@ -447,14 +437,11 @@ def inspect_product(product):
             )
         )
 
-        cart_url = (
-            build_cart_url(
-                variant
-            )
+        cart_url = build_cart_url(
+            variant
         )
 
         print()
-
         print(
             f"🎯 Taille : "
             f"{variant_title}"
@@ -477,9 +464,8 @@ def inspect_product(product):
             )
 
             if cart_url:
-
                 print(
-                    f"🛒 URL panier préparée : "
+                    f"🛒 Lien panier préparé : "
                     f"{cart_url}"
                 )
 
@@ -504,10 +490,10 @@ def inspect_product(product):
 
 
 # ============================================================
-# ALERTE
+# TELEGRAM — PRODUIT DISPONIBLE
 # ============================================================
 
-def notify_product(
+def notify_available_product(
     product,
     variant_info
 ):
@@ -532,7 +518,7 @@ def notify_product(
     message = (
         "🚨 AWESOME GOD RADAR 🚨\n\n"
         "🔥 BLIENTELE\n"
-        "🟢 PRODUIT + TAILLE DÉTECTÉS\n\n"
+        "🟢 PRODUIT DISPONIBLE\n\n"
         f"👟 {title}\n"
         f"🎯 Taille : {variant_title}\n\n"
         "🔗 Produit :\n"
@@ -542,27 +528,26 @@ def notify_product(
     if cart_url:
 
         message += (
-            "\n🛒 Panier préparé :\n"
+            "\n🛒 Lien panier préparé :\n"
             f"{cart_url}\n"
-            "\n⚠️ Vérifie le panier "
-            "et finalise manuellement."
+            "\n⚠️ Ouvre le lien et "
+            "finalise manuellement."
         )
 
     else:
 
         message += (
-            "\n⚠️ Impossible de préparer "
-            "une URL panier avec cette "
-            "structure de variante."
+            "\n⚠️ Aucun lien panier "
+            "n'a pu être préparé."
         )
 
-    send_telegram(
+    return send_telegram(
         message
     )
 
 
 # ============================================================
-# RADAR
+# PROGRAMME PRINCIPAL
 # ============================================================
 
 def main():
@@ -610,24 +595,47 @@ def main():
         )
     )
 
+    fingerprints = memory.get(
+        "fingerprints",
+        {}
+    )
+
+    # --------------------------------------------------------
+    # LECTURE DU CATALOGUE
+    # --------------------------------------------------------
+
     try:
 
         products = get_products()
 
+    except requests.RequestException as error:
+
+        print(
+            f"❌ Erreur HTTP Blientele : "
+            f"{error}"
+        )
+
+        return
+
     except Exception as error:
 
         print(
-            f"❌ Impossible de lire "
-            f"le catalogue : {error}"
+            f"❌ Erreur catalogue : "
+            f"{error}"
         )
 
         return
 
     print()
+
     print(
         f"📦 Produits trouvés : "
         f"{len(products)}"
     )
+
+    # --------------------------------------------------------
+    # CATALOGUE VIDE
+    # --------------------------------------------------------
 
     if not products:
 
@@ -642,6 +650,10 @@ def main():
         )
 
         return
+
+    # --------------------------------------------------------
+    # FILTRE PRODUITS CIBLES
+    # --------------------------------------------------------
 
     relevant_products = [
         product
@@ -666,6 +678,12 @@ def main():
         )
 
         return
+
+    # --------------------------------------------------------
+    # ANALYSE
+    # --------------------------------------------------------
+
+    available_total = 0
 
     for product in relevant_products:
 
@@ -699,46 +717,68 @@ def main():
             )
         ]
 
+        available_total += len(
+            available_variants
+        )
+
         # ----------------------------------------------------
-        # NOUVEAU PRODUIT + TAILLE DISPONIBLE
+        # ALERTES UNIQUEMENT POUR UNE
+        # NOUVELLE DISPONIBILITÉ
         # ----------------------------------------------------
 
-        if available_variants:
+        for variant_info in (
+            available_variants
+        ):
 
-            for variant_info in (
-                available_variants
-            ):
+            variant_id = str(
+                variant_info.get(
+                    "variant_id",
+                    ""
+                )
+            )
 
-                variant_key = (
-                    product_key
-                    + ":variant:"
-                    + str(
-                        variant_info.get(
-                            "variant_id"
-                        )
-                    )
+            variant_key = (
+                product_key
+                + ":variant:"
+                + variant_id
+            )
+
+            if variant_key in seen_products:
+
+                print(
+                    "♻️ Signal déjà connu :",
+                    variant_key
                 )
 
-                if variant_key in seen_products:
+                continue
 
-                    print(
-                        "♻️ Signal déjà envoyé :",
-                        variant_key
-                    )
-
-                    continue
-
-                notify_product(
+            telegram_ok = (
+                notify_available_product(
                     product,
                     variant_info
                 )
+            )
+
+            if telegram_ok:
 
                 seen_products.add(
                     variant_key
                 )
 
+                print(
+                    "📲 Alerte Telegram envoyée"
+                )
+
+            else:
+
+                print(
+                    "⚠️ Alerte non confirmée ; "
+                    "elle sera retentée au "
+                    "prochain passage."
+                )
+
         # ----------------------------------------------------
-        # MEMORISATION DU PRODUIT
+        # EMPREINTE DU PRODUIT
         # ----------------------------------------------------
 
         fingerprint = make_id(
@@ -762,33 +802,67 @@ def main():
             )
         )
 
-        memory[
-            "fingerprint:"
-            + product_key
+        fingerprints[
+            product_key
         ] = fingerprint
+
+    # --------------------------------------------------------
+    # SAUVEGARDE
+    # --------------------------------------------------------
 
     memory["products"] = list(
         seen_products
+    )
+
+    memory["fingerprints"] = (
+        fingerprints
     )
 
     save_memory(
         memory
     )
 
+    # --------------------------------------------------------
+    # RESULTAT
+    # --------------------------------------------------------
+
     print()
     print(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
+
     print(
         "📊 Résultat Blientele"
     )
+
     print(
         f"🎯 Produits cibles : "
         f"{len(relevant_products)}"
     )
+
     print(
-        "🛒 Mode : assistance panier"
+        f"👟 Tailles cibles disponibles : "
+        f"{available_total}"
     )
+
+    if available_total:
+
+        print(
+            "🚨 DISPONIBILITÉ DÉTECTÉE"
+        )
+
+    else:
+
+        print(
+            "✅ Aucune EU 44,5 / US 10,5 "
+            "disponible"
+        )
+
+    print(
+        "💾 Mémoire : "
+        f"{MEMORY_FILE}"
+    )
+
     print(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -796,4 +870,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
