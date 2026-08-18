@@ -21,21 +21,18 @@ HEADERS = {
     "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
 }
 
-# Termes directement liés à notre sortie
 STRONG_TERMS = [
     "s71047-5",
     "awesome gods",
+    "awesome god",
     "grid jazz 9",
 ]
 
-# Termes utiles mais moins précis
 IMPORTANT_TERMS = [
     "saucony",
     "sauconyorigs",
-    "blientele",
 ]
 
-# Termes d'action
 ACTION_TERMS = [
     "release",
     "release details",
@@ -43,12 +40,20 @@ ACTION_TERMS = [
     "dropping",
     "available",
     "available now",
-    "out now",
     "shop now",
     "link",
     "8/28",
     "8.28",
     "28 août",
+]
+
+IGNORE_TERMS = [
+    "out now",
+]
+
+WESTSIDE_IDENTIFIERS = [
+    "@westsidegunn",
+    "westsidegunn",
 ]
 
 
@@ -71,7 +76,7 @@ def load_memory():
             return set(data)
 
     except Exception as error:
-        print(f"⚠️ Erreur lecture mémoire : {error}")
+        print(f"⚠️ Erreur mémoire : {error}")
 
     return set()
 
@@ -111,6 +116,73 @@ def find_terms(text):
     return list(dict.fromkeys(matches))
 
 
+def is_westside_post(text):
+    """
+    Vérifie que le contenu semble appartenir
+    au compte Westside Gunn.
+
+    On accepte les publications contenant
+    son identifiant, mais on élimine les cas
+    où la présence de @westsidegunn vient
+    simplement d'une mention dans une réponse.
+    """
+
+    if "@westsidegunn" not in text:
+        return False
+
+    # Si le texte commence clairement par une
+    # mention d'un autre utilisateur, on évite
+    # de le considérer comme un post de Westside.
+    first_part = text[:150]
+
+    other_user = re.search(
+        r"@\w+",
+        first_part,
+    )
+
+    if other_user:
+        username = other_user.group(0).lower()
+
+        if username != "@westsidegunn":
+            return False
+
+    return True
+
+
+def is_relevant(text):
+    strong = any(
+        term in text
+        for term in STRONG_TERMS
+    )
+
+    saucony = any(
+        term in text
+        for term in IMPORTANT_TERMS
+    )
+
+    action = any(
+        term in text
+        for term in ACTION_TERMS
+    )
+
+    # Référence exacte
+    if "s71047-5" in text:
+        return True
+
+    # Nom exact de la collaboration
+    if "awesome gods" in text:
+        return True
+
+    if "grid jazz 9" in text:
+        return True
+
+    # Saucony + action de release
+    if saucony and action:
+        return True
+
+    return False
+
+
 def calculate_priority(matches):
     strong = any(
         term in matches
@@ -127,62 +199,26 @@ def calculate_priority(matches):
         for term in ACTION_TERMS
     )
 
-    # Référence exacte ou nom de la paire + action
-    if strong and action:
+    if "s71047-5" in matches:
         return "🔴 CRITIQUE"
 
-    # Référence exacte / nom de paire
+    if (
+        ("awesome gods" in matches
+         or "grid jazz 9" in matches)
+        and action
+    ):
+        return "🔴 CRITIQUE"
+
     if strong:
         return "🟠 IMPORTANT"
 
-    # Saucony + action
     if saucony and action:
         return "🟠 IMPORTANT"
 
-    # Saucony seul
     if saucony:
         return "🟡 À SURVEILLER"
 
     return "⚪ IGNORÉ"
-
-
-def is_relevant(text):
-    """
-    Évite les faux positifs.
-    """
-
-    strong = any(
-        term in text
-        for term in STRONG_TERMS
-    )
-
-    saucony = any(
-        term in text
-        for term in IMPORTANT_TERMS
-    )
-
-    action = any(
-        term in text
-        for term in ACTION_TERMS
-    )
-
-    # La référence exacte suffit
-    if "s71047-5" in text:
-        return True
-
-    # Un nom de paire seul est pertinent
-    if "awesome gods" in text:
-        return True
-
-    if "grid jazz 9" in text:
-        return True
-
-    # Saucony doit être accompagné d'un élément
-    # d'action pour devenir pertinent
-    if saucony and action:
-        return True
-
-    return False
 
 
 def analyse_x(memory):
@@ -210,16 +246,17 @@ def analyse_x(memory):
         "html.parser",
     )
 
-    # X utilise actuellement des balises article
-    # pour ses publications lorsqu'elles sont exposées.
     articles = soup.find_all("article")
 
     if not articles:
         print("⚠️ Aucun article X identifiable")
         return 0
 
-    print(f"📰 Publications détectées : {len(articles)}")
+    print(
+        f"📰 Blocs X détectés : {len(articles)}"
+    )
 
+    seen_in_this_run = set()
     new_signals = 0
 
     for article in articles:
@@ -234,17 +271,36 @@ def analyse_x(memory):
         if not text:
             continue
 
+        # On ne veut que les contenus
+        # appartenant réellement à Westside.
+        if not is_westside_post(text):
+            continue
+
+        # On ignore les vieux signaux génériques.
+        if any(
+            term in text
+            for term in IGNORE_TERMS
+        ):
+            if not any(
+                term in text
+                for term in STRONG_TERMS
+            ):
+                continue
+
         if not is_relevant(text):
             continue
 
         matches = find_terms(text)
 
-        # Ignore les simples mentions génériques
-        if not matches:
-            continue
-
+        # Déduplication pendant le même passage
         post_id = make_id(text)
 
+        if post_id in seen_in_this_run:
+            continue
+
+        seen_in_this_run.add(post_id)
+
+        # Déduplication entre deux exécutions
         if post_id in memory:
             continue
 
@@ -253,10 +309,10 @@ def analyse_x(memory):
         level = calculate_priority(matches)
 
         print()
-        print("🆕 NOUVELLE PUBLICATION PERTINENTE")
+        print("🆕 NOUVEAU POST WESTSIDE GUNN")
         print(f"🚨 Priorité : {level}")
 
-        print("🔎 Termes détectés :")
+        print("🔎 Termes détectés:")
 
         for term in matches:
             print(f"   • {term}")
@@ -268,7 +324,7 @@ def analyse_x(memory):
 
     if new_signals == 0:
         print(
-            "♻️ Aucun nouveau post pertinent détecté"
+            "♻️ Aucun nouveau post Westside pertinent"
         )
 
     return new_signals
@@ -291,18 +347,19 @@ def analyse_instagram(memory):
         if response.status_code == 429:
             print(
                 "⏳ Instagram limite actuellement "
-                "les requêtes (429)"
+                "les requêtes."
             )
             print(
-                "ℹ️ Instagram sera simplement ignoré "
-                "pour ce passage."
+                "ℹ️ Instagram ignoré pour ce passage."
             )
             return 0
 
         response.raise_for_status()
 
     except requests.RequestException as error:
-        print(f"⚠️ Instagram inaccessible : {error}")
+        print(
+            f"⚠️ Instagram inaccessible : {error}"
+        )
         return 0
 
     soup = BeautifulSoup(
@@ -318,46 +375,44 @@ def analyse_instagram(memory):
     )
 
     if not text:
-        print("⚪ Aucun contenu public exploitable")
-        return 0
-
-    matches = find_terms(text)
-
-    # Instagram n'est utilisé ici que comme
-    # source complémentaire.
-    if not matches:
-        print("⚪ Aucun signal Instagram")
-        return 0
-
-    # On ne mémorise pas toute la page Instagram.
-    relevant = [
-        term
-        for term in matches
-        if term in STRONG_TERMS
-    ]
-
-    if not relevant:
         print(
-            "⚪ Aucun signal Instagram suffisamment "
-            "précis"
+            "⚪ Aucun contenu Instagram exploitable"
         )
         return 0
 
-    content = "|".join(sorted(relevant))
-    post_id = make_id(
-        f"instagram|{content}"
+    # Instagram reste secondaire.
+    # On ne déclenche que sur une référence
+    # extrêmement précise.
+    precise_terms = [
+        "s71047-5",
+        "awesome gods",
+        "grid jazz 9",
+    ]
+
+    matches = [
+        term
+        for term in precise_terms
+        if term in text
+    ]
+
+    if not matches:
+        print("⚪ Aucun signal Instagram précis")
+        return 0
+
+    signal_id = make_id(
+        "instagram|" + "|".join(matches)
     )
 
-    if post_id in memory:
+    if signal_id in memory:
         print("♻️ Signal Instagram déjà connu")
         return 0
 
-    memory.add(post_id)
+    memory.add(signal_id)
 
     print("🆕 SIGNAL INSTAGRAM")
     print("🔎 Termes :")
 
-    for term in relevant:
+    for term in matches:
         print(f"   • {term}")
 
     return 1
@@ -366,7 +421,7 @@ def analyse_instagram(memory):
 def main():
     print("🔎 WESTSIDE GUNN RADAR")
     print("🎯 X + Instagram")
-    print("🎯 Surveillance de la sortie S71047-5")
+    print("🎯 Surveillance : S71047-5")
     print()
 
     memory = load_memory()
