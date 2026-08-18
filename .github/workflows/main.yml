@@ -34,6 +34,9 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python bot.py
+          - name: Tester Blientele
+        run: |
+          python blientele_cart.py
 
       - name: Sauvegarder la memoire
         run: |
