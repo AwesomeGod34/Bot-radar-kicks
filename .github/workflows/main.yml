@@ -11,9 +11,11 @@ permissions:
 
 jobs:
   radar:
+
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Recuperer le code
         uses: actions/checkout@v4
 
@@ -54,7 +56,7 @@ jobs:
           git config user.name "Awesome God Radar"
           git config user.email "actions@github.com"
 
-          git add seen.json
+          git add seen.json westside_seen.json
 
           git diff --cached --quiet || \
             git commit -m "Update radar memory"
