@@ -1,11 +1,14 @@
+```yaml
 name: Awesome God Radar
 
 on:
   schedule:
-    # GitHub Actions ne garantit pas une exécution exactement à la minute,
-    # mais cette programmation demande un passage toutes les 5 minutes.
+    # Passage demandé toutes les 5 minutes.
+    # GitHub Actions peut toutefois décaler légèrement
+    # l'heure réelle d'exécution.
     - cron: "*/5 * * * *"
 
+  # Permet de lancer le radar manuellement.
   workflow_dispatch:
 
 permissions:
@@ -112,3 +115,4 @@ jobs:
             git commit -m "Update radar memory"
             git push
           fi
+```
