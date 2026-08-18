@@ -2,6 +2,8 @@ name: Awesome God Radar
 
 on:
   schedule:
+    # GitHub Actions ne garantit pas une exécution exactement à la minute,
+    # mais cette programmation demande un passage toutes les 5 minutes.
     - cron: "*/5 * * * *"
 
   workflow_dispatch:
@@ -16,33 +18,71 @@ jobs:
 
     steps:
 
-      - name: Recuperer le code
+      # --------------------------------------------------
+      # RÉCUPÉRATION DU CODE
+      # --------------------------------------------------
+
+      - name: Récupérer le code
         uses: actions/checkout@v4
+
+      # --------------------------------------------------
+      # PYTHON
+      # --------------------------------------------------
 
       - name: Installer Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Installer les dependances
+      # --------------------------------------------------
+      # DÉPENDANCES
+      # --------------------------------------------------
+
+      - name: Installer les dépendances
         run: |
+          python -m pip install --upgrade pip
           pip install requests beautifulsoup4
 
-      - name: Tester Blientele
+      # --------------------------------------------------
+      # BLIENTELE
+      # Surveillance prioritaire
+      # + préparation du cart automatique
+      # --------------------------------------------------
+
+      - name: Scanner Blientele
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python blientele_cart.py
 
-      - name: Tester Saucony
+      # --------------------------------------------------
+      # SAUCONY
+      # --------------------------------------------------
+
+      - name: Scanner Saucony
         run: |
           python saucony_radar.py
 
-      - name: Tester EQL
+      # --------------------------------------------------
+      # EQL
+      # --------------------------------------------------
+
+      - name: Scanner EQL
         run: |
           python eql_radar.py
 
-      - name: Tester Westside Gunn
+      # --------------------------------------------------
+      # WESTSIDE GUNN
+      # --------------------------------------------------
+
+      - name: Scanner Westside Gunn
         run: |
           python westside_radar.py
+
+      # --------------------------------------------------
+      # RADAR CENTRAL + TELEGRAM
+      # --------------------------------------------------
 
       - name: Lancer le radar Telegram
         env:
@@ -51,14 +91,24 @@ jobs:
         run: |
           python bot.py
 
-      - name: Sauvegarder la memoire
+      # --------------------------------------------------
+      # SAUVEGARDE DES MÉMOIRES
+      # --------------------------------------------------
+
+      - name: Sauvegarder les mémoires
         run: |
           git config user.name "Awesome God Radar"
           git config user.email "actions@github.com"
 
-          git add seen.json westside_seen.json westside_alerts.json
+          git add \
+            seen.json \
+            westside_seen.json \
+            westside_alerts.json \
+            blientele_cart_seen.json
 
-          git diff --cached --quiet || \
+          if git diff --cached --quiet; then
+            echo "ℹ️ Aucun changement de mémoire à sauvegarder."
+          else
             git commit -m "Update radar memory"
-
-          git push
+            git push
+          fi
