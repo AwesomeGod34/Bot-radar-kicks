@@ -38,6 +38,10 @@ jobs:
         run: |
           python eql_radar.py
 
+      - name: Tester Westside Gunn
+        run: |
+          python westside_radar.py
+
       - name: Lancer le radar
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
