@@ -34,6 +34,10 @@ jobs:
         run: |
           python saucony_radar.py
 
+      - name: Tester EQL
+        run: |
+          python eql_radar.py
+
       - name: Lancer le radar
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
