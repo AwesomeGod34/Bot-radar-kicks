@@ -2,12 +2,14 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from datetime import datetime, timezone
 
 import requests
 from bs4 import BeautifulSoup
 
 
 MEMORY_FILE = Path("westside_seen.json")
+ALERTS_FILE = Path("westside_alerts.json")
 
 X_URL = "https://x.com/WESTSIDEGUNN"
 INSTAGRAM_URL = "https://www.instagram.com/westsidegunn/"
@@ -52,6 +54,10 @@ IGNORE_TERMS = [
 ]
 
 
+# --------------------------------------------------
+# OUTILS
+# --------------------------------------------------
+
 def normalise(text):
     text = text.lower()
     text = re.sub(r"\s+", " ", text)
@@ -59,6 +65,7 @@ def normalise(text):
 
 
 def load_memory():
+
     if not MEMORY_FILE.exists():
         return {
             "initialized": False,
@@ -66,6 +73,7 @@ def load_memory():
         }
 
     try:
+
         data = json.loads(
             MEMORY_FILE.read_text(
                 encoding="utf-8"
@@ -76,6 +84,7 @@ def load_memory():
             return data
 
     except Exception as error:
+
         print(
             f"⚠️ Erreur mémoire : {error}"
         )
@@ -87,6 +96,7 @@ def load_memory():
 
 
 def save_memory(memory):
+
     MEMORY_FILE.write_text(
         json.dumps(
             memory,
@@ -97,31 +107,80 @@ def save_memory(memory):
     )
 
 
+def load_alerts():
+
+    if not ALERTS_FILE.exists():
+        return []
+
+    try:
+
+        data = json.loads(
+            ALERTS_FILE.read_text(
+                encoding="utf-8"
+            )
+        )
+
+        if isinstance(data, list):
+            return data
+
+    except Exception as error:
+
+        print(
+            f"⚠️ Erreur fichier alertes : {error}"
+        )
+
+    return []
+
+
+def save_alerts(alerts):
+
+    ALERTS_FILE.write_text(
+        json.dumps(
+            alerts,
+            ensure_ascii=False,
+            indent=2
+        ),
+        encoding="utf-8"
+    )
+
+
 def content_id(text):
+
     return hashlib.sha256(
         normalise(text).encode("utf-8")
     ).hexdigest()
 
 
+# --------------------------------------------------
+# DETECTION
+# --------------------------------------------------
+
 def find_terms(text):
+
     matches = []
 
     for term in STRONG_TERMS:
+
         if term in text:
             matches.append(term)
 
     for term in IMPORTANT_TERMS:
+
         if term in text:
             matches.append(term)
 
     for term in ACTION_TERMS:
+
         if term in text:
             matches.append(term)
 
-    return list(dict.fromkeys(matches))
+    return list(
+        dict.fromkeys(matches)
+    )
 
 
 def is_relevant(text):
+
     text = normalise(text)
 
     if "s71047-5" in text:
@@ -150,6 +209,7 @@ def is_relevant(text):
 
 
 def priority(matches):
+
     if "s71047-5" in matches:
         return "🔴 CRITIQUE"
 
@@ -192,14 +252,18 @@ def priority(matches):
     return "🟡 À SURVEILLER"
 
 
+# --------------------------------------------------
+# X
+# --------------------------------------------------
+
 def extract_status_id(article):
-    """
-    Cherche un véritable identifiant de publication X
-    dans les liens du bloc.
-    """
 
     for link in article.find_all("a"):
-        href = link.get("href", "")
+
+        href = link.get(
+            "href",
+            ""
+        )
 
         match = re.search(
             r"/status/(\d+)",
@@ -213,7 +277,10 @@ def extract_status_id(article):
 
 
 def extract_articles(soup):
-    articles = soup.find_all("article")
+
+    articles = soup.find_all(
+        "article"
+    )
 
     results = []
 
@@ -243,12 +310,50 @@ def extract_articles(soup):
     return results
 
 
-def analyse_x(memory):
+def create_alert(
+    alerts,
+    post_key,
+    status_id,
+    text,
+    matches,
+    level,
+    url
+):
+
+    # Sécurité supplémentaire :
+    # ne jamais mettre deux fois
+    # le même signal dans la file.
+    for alert in alerts:
+
+        if alert.get("post_key") == post_key:
+            return
+
+    alerts.append(
+        {
+            "post_key": post_key,
+            "source": "X",
+            "priority": level,
+            "terms": matches,
+            "excerpt": text[:900],
+            "url": url,
+            "post_id": status_id or "",
+            "detected_at": datetime.now(
+                timezone.utc
+            ).isoformat(),
+        }
+    )
+
+
+def analyse_x(memory, alerts):
+
     print()
     print("🌐 Source : X")
-    print(f"🔗 {X_URL}")
+    print(
+        f"🔗 {X_URL}"
+    )
 
     try:
+
         response = requests.get(
             X_URL,
             headers=HEADERS,
@@ -262,9 +367,11 @@ def analyse_x(memory):
         response.raise_for_status()
 
     except requests.RequestException as error:
+
         print(
             f"⚠️ X inaccessible : {error}"
         )
+
         return 0
 
     soup = BeautifulSoup(
@@ -277,9 +384,11 @@ def analyse_x(memory):
     )
 
     if not articles:
+
         print(
             "⚠️ Aucun post X exploitable"
         )
+
         return 0
 
     print(
@@ -288,7 +397,10 @@ def analyse_x(memory):
     )
 
     known_posts = set(
-        memory.get("posts", [])
+        memory.get(
+            "posts",
+            []
+        )
     )
 
     current_posts = []
@@ -300,32 +412,46 @@ def analyse_x(memory):
         if not is_relevant(text):
             continue
 
-        status_id = article["status_id"]
+        status_id = article[
+            "status_id"
+        ]
 
         if status_id:
-            post_key = f"x:{status_id}"
-        else:
+
             post_key = (
-                f"x-content:{content_id(text)}"
+                f"x:{status_id}"
+            )
+
+        else:
+
+            post_key = (
+                "x-content:"
+                + content_id(text)
             )
 
         current_posts.append(
             post_key
         )
 
-    # Déduplication dans le même passage
     current_posts = list(
-        dict.fromkeys(current_posts)
+        dict.fromkeys(
+            current_posts
+        )
     )
 
     # ------------------------------------------------
-    # PREMIER PASSAGE = INITIALISATION
+    # PREMIER PASSAGE
     # ------------------------------------------------
 
-    if not memory.get("initialized", False):
+    if not memory.get(
+        "initialized",
+        False
+    ):
 
         for post_key in current_posts:
-            known_posts.add(post_key)
+            known_posts.add(
+                post_key
+            )
 
         memory["posts"] = list(
             known_posts
@@ -337,13 +463,15 @@ def analyse_x(memory):
         print(
             "🧠 Initialisation de la mémoire X"
         )
+
         print(
             f"📌 Publications mémorisées : "
             f"{len(current_posts)}"
         )
+
         print(
-            "✅ Aucun ancien contenu ne déclenche "
-            "d'alerte."
+            "✅ Aucun ancien contenu "
+            "ne déclenche d'alerte."
         )
 
         return 0
@@ -361,28 +489,65 @@ def analyse_x(memory):
         if not is_relevant(text):
             continue
 
-        status_id = article["status_id"]
+        status_id = article[
+            "status_id"
+        ]
 
         if status_id:
-            post_key = f"x:{status_id}"
-        else:
+
             post_key = (
-                f"x-content:{content_id(text)}"
+                f"x:{status_id}"
+            )
+
+        else:
+
+            post_key = (
+                "x-content:"
+                + content_id(text)
             )
 
         if post_key in known_posts:
             continue
 
-        known_posts.add(post_key)
+        known_posts.add(
+            post_key
+        )
 
-        matches = find_terms(text)
+        matches = find_terms(
+            text
+        )
 
-        level = priority(matches)
+        level = priority(
+            matches
+        )
+
+        if status_id:
+
+            post_url = (
+                f"https://x.com/"
+                f"WESTSIDEGUNN/status/"
+                f"{status_id}"
+            )
+
+        else:
+
+            post_url = X_URL
+
+        create_alert(
+            alerts=alerts,
+            post_key=post_key,
+            status_id=status_id,
+            text=text,
+            matches=matches,
+            level=level,
+            url=post_url,
+        )
 
         print()
         print(
             "🆕 NOUVEAU POST PERTINENT"
         )
+
         print(
             f"🚨 Priorité : {level}"
         )
@@ -392,18 +557,29 @@ def analyse_x(memory):
         )
 
         for term in matches:
+
             print(
                 f"   • {term}"
             )
 
         if status_id:
+
             print(
-                f"🆔 Post X : {status_id}"
+                f"🆔 Post X : "
+                f"{status_id}"
             )
 
-        print("📝 Extrait :")
+        print(
+            "📝 Extrait :"
+        )
+
         print(
             f"   {text[:700]}"
+        )
+
+        print(
+            "📥 Signal ajouté à "
+            "westside_alerts.json"
         )
 
         new_signals += 1
@@ -413,6 +589,7 @@ def analyse_x(memory):
     )
 
     if new_signals == 0:
+
         print(
             "♻️ Aucun nouveau post pertinent"
         )
@@ -420,12 +597,26 @@ def analyse_x(memory):
     return new_signals
 
 
-def analyse_instagram(memory):
+# --------------------------------------------------
+# INSTAGRAM
+# --------------------------------------------------
+
+def analyse_instagram(
+    memory,
+    alerts
+):
+
     print()
-    print("🌐 Source : Instagram")
-    print(f"🔗 {INSTAGRAM_URL}")
+    print(
+        "🌐 Source : Instagram"
+    )
+
+    print(
+        f"🔗 {INSTAGRAM_URL}"
+    )
 
     try:
+
         response = requests.get(
             INSTAGRAM_URL,
             headers=HEADERS,
@@ -433,24 +624,33 @@ def analyse_instagram(memory):
         )
 
         print(
-            f"📡 HTTP : {response.status_code}"
+            f"📡 HTTP : "
+            f"{response.status_code}"
         )
 
         if response.status_code == 429:
+
             print(
-                "⏳ Instagram limite les requêtes."
+                "⏳ Instagram limite "
+                "les requêtes."
             )
+
             print(
-                "ℹ️ Instagram ignoré pour ce passage."
+                "ℹ️ Instagram ignoré "
+                "pour ce passage."
             )
+
             return 0
 
         response.raise_for_status()
 
     except requests.RequestException as error:
+
         print(
-            f"⚠️ Instagram inaccessible : {error}"
+            f"⚠️ Instagram inaccessible : "
+            f"{error}"
         )
+
         return 0
 
     soup = BeautifulSoup(
@@ -478,27 +678,35 @@ def analyse_instagram(memory):
     ]
 
     if not matches:
+
         print(
-            "⚪ Aucun signal Instagram précis"
+            "⚪ Aucun signal "
+            "Instagram précis"
         )
+
         return 0
 
-    # Instagram reste secondaire.
-    # On évite les alertes répétitives basées
-    # uniquement sur le contenu de la page.
     signal_key = (
         "instagram:"
-        + "|".join(sorted(matches))
+        + "|".join(
+            sorted(matches)
+        )
     )
 
     instagram_memory = set(
-        memory.get("instagram", [])
+        memory.get(
+            "instagram",
+            []
+        )
     )
 
     if signal_key in instagram_memory:
+
         print(
-            "♻️ Signal Instagram déjà connu"
+            "♻️ Signal Instagram "
+            "déjà connu"
         )
+
         return 0
 
     instagram_memory.add(
@@ -514,38 +722,79 @@ def analyse_instagram(memory):
     )
 
     for term in matches:
+
         print(
             f"   • {term}"
         )
 
+    # Instagram reste secondaire.
+    # On le met en file Telegram
+    # uniquement lorsqu'un signal précis
+    # apparaît pour la première fois.
+
+    create_alert(
+        alerts=alerts,
+        post_key=signal_key,
+        status_id="",
+        text=(
+            "Signal Instagram précis détecté : "
+            + ", ".join(matches)
+        ),
+        matches=matches,
+        level="🟠 IMPORTANT",
+        url=INSTAGRAM_URL,
+    )
+
+    print(
+        "📥 Signal ajouté à "
+        "westside_alerts.json"
+    )
+
     return 1
 
 
+# --------------------------------------------------
+# PROGRAMME PRINCIPAL
+# --------------------------------------------------
+
 def main():
+
     print(
         "🔎 WESTSIDE GUNN RADAR"
     )
+
     print(
         "🎯 X + Instagram"
     )
+
     print(
         "🎯 Surveillance : S71047-5"
     )
+
     print()
 
     memory = load_memory()
+    alerts = load_alerts()
 
     total_new = 0
 
     total_new += analyse_x(
-        memory
+        memory,
+        alerts
     )
 
     total_new += analyse_instagram(
+        memory,
+        alerts
+    )
+
+    save_memory(
         memory
     )
 
-    save_memory(memory)
+    save_alerts(
+        alerts
+    )
 
     print()
     print(
@@ -557,14 +806,23 @@ def main():
     )
 
     print(
-        f"Nouveaux signaux : {total_new}"
+        f"Nouveaux signaux : "
+        f"{total_new}"
+    )
+
+    print(
+        f"📨 Alertes en attente Telegram : "
+        f"{len(alerts)}"
     )
 
     if total_new:
+
         print(
             "🚨 NOUVEAU SIGNAL DÉTECTÉ"
         )
+
     else:
+
         print(
             "✅ Aucun nouveau signal"
         )
