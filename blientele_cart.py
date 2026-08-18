@@ -1,6 +1,9 @@
-import json
+```python
 import os
+import json
+import hashlib
 from pathlib import Path
+from datetime import datetime, timezone
 
 import requests
 
@@ -11,24 +14,35 @@ import requests
 
 SHOP_URL = "https://www.blientele.com"
 PRODUCTS_URL = f"{SHOP_URL}/products.json?limit=250"
-CART_ADD_URL = f"{SHOP_URL}/cart/add.js"
-CART_URL = f"{SHOP_URL}/cart.js"
+
+MEMORY_FILE = Path("blientele_cart_seen.json")
+
+TARGET_SIZES = {
+    "44.5",
+    "44,5",
+    "us 10.5",
+    "us10.5",
+    "10.5",
+}
 
 SEARCH_TERMS = [
     "awesome gods",
     "awesome god",
-    "s71047-5",
-    "grid jazz",
     "saucony",
+    "grid jazz",
+    "s71047-5",
 ]
 
-# Tailles recherchées.
-TARGET_SIZES = {
-    "44.5",
-    "10.5",
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 "
+        "(KHTML, like Gecko) "
+        "Chrome/131.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+    "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
 }
-
-STATE_FILE = Path("blientele_cart_seen.json")
 
 TELEGRAM_TOKEN = os.environ.get(
     "TELEGRAM_BOT_TOKEN"
@@ -38,32 +52,22 @@ TELEGRAM_CHAT_ID = os.environ.get(
     "TELEGRAM_CHAT_ID"
 )
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 "
-        "(KHTML, like Gecko) "
-        "Chrome/131.0 Safari/537.36"
-    ),
-    "Accept-Language": (
-        "fr-FR,fr;q=0.9,en;q=0.8"
-    ),
-}
-
 
 # ============================================================
 # MEMOIRE
 # ============================================================
 
-def load_state():
-    if not STATE_FILE.exists():
+def load_memory():
+
+    if not MEMORY_FILE.exists():
         return {
-            "carted_variants": []
+            "products": []
         }
 
     try:
+
         data = json.loads(
-            STATE_FILE.read_text(
+            MEMORY_FILE.read_text(
                 encoding="utf-8"
             )
         )
@@ -72,24 +76,33 @@ def load_state():
             return data
 
     except Exception as error:
+
         print(
             f"⚠️ Erreur mémoire : {error}"
         )
 
     return {
-        "carted_variants": []
+        "products": []
     }
 
 
-def save_state(state):
-    STATE_FILE.write_text(
+def save_memory(memory):
+
+    MEMORY_FILE.write_text(
         json.dumps(
-            state,
-            ensure_ascii=False,
-            indent=2
+            memory,
+            indent=2,
+            ensure_ascii=False
         ),
         encoding="utf-8"
     )
+
+
+def make_id(value):
+
+    return hashlib.sha256(
+        value.encode("utf-8")
+    ).hexdigest()
 
 
 # ============================================================
@@ -111,7 +124,7 @@ def send_telegram(message):
         return False
 
     url = (
-        "https://api.telegram.org/"
+        f"https://api.telegram.org/"
         f"bot{TELEGRAM_TOKEN}/sendMessage"
     )
 
@@ -129,53 +142,30 @@ def send_telegram(message):
 
         response.raise_for_status()
 
-        print(
-            "📲 Telegram envoyé"
-        )
-
         return True
 
     except requests.RequestException as error:
 
         print(
-            f"❌ Erreur Telegram : {error}"
+            f"❌ Telegram : {error}"
         )
 
         return False
 
 
 # ============================================================
-# HTTP
+# CATALOGUE
 # ============================================================
 
-def create_session():
-
-    session = requests.Session()
-
-    session.headers.update(
-        HEADERS
-    )
-
-    return session
-
-
-def get_products(session):
+def get_products():
 
     print(
         f"🌐 Catalogue : {PRODUCTS_URL}"
     )
 
-    response = session.get(
+    response = requests.get(
         PRODUCTS_URL,
-        params={
-            "_radar": str(
-                int(
-                    __import__(
-                        "time"
-                    ).time()
-                )
-            )
-        },
+        headers=HEADERS,
         timeout=20,
     )
 
@@ -186,52 +176,56 @@ def get_products(session):
 
     response.raise_for_status()
 
-    data = response.json()
+    try:
 
-    return data.get(
+        data = response.json()
+
+    except ValueError as error:
+
+        raise RuntimeError(
+            "Réponse catalogue non JSON"
+        ) from error
+
+    products = data.get(
         "products",
         []
     )
 
+    if not isinstance(
+        products,
+        list
+    ):
+        return []
+
+    return products
+
 
 # ============================================================
-# RECHERCHE PRODUIT
+# DETECTION PRODUIT
 # ============================================================
+
+def searchable_text(product):
+
+    fields = [
+        product.get("title", ""),
+        product.get("handle", ""),
+        product.get("vendor", ""),
+        product.get("product_type", ""),
+        product.get("body_html", ""),
+        product.get("tags", ""),
+    ]
+
+    return " ".join(
+        str(field or "")
+        for field in fields
+    ).lower()
+
 
 def product_matches(product):
 
-    searchable = {
-        "title": product.get(
-            "title",
-            ""
-        ),
-        "handle": product.get(
-            "handle",
-            ""
-        ),
-        "vendor": product.get(
-            "vendor",
-            ""
-        ),
-        "product_type": product.get(
-            "product_type",
-            ""
-        ),
-        "body_html": product.get(
-            "body_html",
-            ""
-        ),
-        "tags": product.get(
-            "tags",
-            ""
-        ),
-    }
-
-    text = json.dumps(
-        searchable,
-        ensure_ascii=False,
-        default=str,
-    ).lower()
+    text = searchable_text(
+        product
+    )
 
     return any(
         term.lower() in text
@@ -240,104 +234,78 @@ def product_matches(product):
 
 
 # ============================================================
-# NORMALISATION DES TAILLES
+# TAILLES
 # ============================================================
 
 def normalize_size(value):
 
-    value = str(
+    text = str(
         value or ""
-    ).strip().lower()
+    ).lower().strip()
 
-    value = value.replace(
-        ",",
-        "."
+    text = (
+        text
+        .replace(",", ".")
+        .replace("eu", "")
+        .replace("size", "")
+        .strip()
     )
 
-    value = value.replace(
-        "–",
-        "-"
-    )
-
-    value = value.replace(
-        "—",
-        "-"
-    )
-
-    value = value.replace(
-        "eu",
-        ""
-    )
-
-    value = value.replace(
-        "us",
-        ""
-    )
-
-    value = value.replace(
-        "size",
-        ""
-    )
-
-    value = value.strip()
-
-    return value
+    return text
 
 
-def detect_size(variant):
+def is_target_size(variant):
 
     title = normalize_size(
-        variant.get(
-            "title",
-            ""
-        )
+        variant.get("title", "")
     )
 
     option1 = normalize_size(
-        variant.get(
-            "option1",
-            ""
-        )
+        variant.get("option1", "")
     )
 
-    option2 = normalize_size(
-        variant.get(
-            "option2",
-            ""
-        )
-    )
-
-    option3 = normalize_size(
-        variant.get(
-            "option3",
-            ""
-        )
-    )
-
-    candidates = [
+    candidates = {
         title,
         option1,
-        option2,
-        option3,
-    ]
+    }
 
     for value in candidates:
 
-        if value in TARGET_SIZES:
+        if value in {
+            "44.5",
+            "10.5",
+        }:
+            return True
 
-            return value
+        if value in {
+            "44.5 us",
+            "us 10.5",
+            "us10.5",
+        }:
+            return True
 
-        # Cas par exemple :
-        # "44.5 EU"
-        # "US 10.5"
-        # "10.5 US"
-        for target in TARGET_SIZES:
+    return False
 
-            if target in value.split():
 
-                return target
+def find_target_variants(product):
 
-    return None
+    variants = product.get(
+        "variants",
+        []
+    )
+
+    results = []
+
+    for variant in variants:
+
+        if is_target_size(
+            variant
+        ):
+            results.append(
+                variant
+            )
+
+    return results
 
 
 # ============================================================
@@ -361,29 +329,115 @@ def product_url(product):
 
 
 # ============================================================
-# DETECTION DES VARIANTES
+# PREPARATION PANIER
 # ============================================================
 
-def find_target_variants(product):
+def build_cart_url(variant):
 
-    matches = []
+    variant_id = variant.get(
+        "id"
+    )
+
+    if not variant_id:
+        return None
+
+    """
+    Shopify expose souvent une route de panier
+    basée sur l'identifiant de variante.
+
+    Cette URL est uniquement préparée pour
+    permettre à l'utilisateur d'ouvrir le panier.
+    Elle ne déclenche aucun paiement.
+    """
+
+    return (
+        f"{SHOP_URL}/cart/"
+        f"{variant_id}:1"
+    )
+
+
+# ============================================================
+# INSPECTION
+# ============================================================
+
+def inspect_product(product):
+
+    title = product.get(
+        "title",
+        "Produit sans nom"
+    )
+
+    handle = product.get(
+        "handle",
+        ""
+    )
+
+    product_id = product.get(
+        "id",
+        ""
+    )
+
+    url = product_url(
+        product
+    )
 
     variants = product.get(
         "variants",
         []
     )
 
-    for variant in variants:
+    print()
+    print(
+        "🚨 PRODUIT CIBLE DÉTECTÉ"
+    )
 
-        size = detect_size(
-            variant
+    print(
+        f"👟 Nom : {title}"
+    )
+
+    print(
+        f"🔑 Handle : {handle}"
+    )
+
+    print(
+        f"🆔 Produit : {product_id}"
+    )
+
+    print(
+        f"🔗 Produit : {url}"
+    )
+
+    print(
+        f"📦 Variantes : "
+        f"{len(variants)}"
+    )
+
+    target_variants = (
+        find_target_variants(
+            product
+        )
+    )
+
+    if not target_variants:
+
+        print(
+            "⚪ EU 44,5 / US 10,5 "
+            "non trouvée"
         )
 
-        if not size:
-            continue
+        return []
+
+    results = []
+
+    for variant in target_variants:
 
         variant_id = variant.get(
             "id"
+        )
+
+        variant_title = variant.get(
+            "title",
+            ""
         )
 
         available = bool(
@@ -393,293 +447,21 @@ def find_target_variants(product):
             )
         )
 
-        matches.append(
-            {
-                "variant": variant,
-                "size": size,
-                "variant_id": variant_id,
-                "available": available,
-            }
-        )
-
-    return matches
-
-
-# ============================================================
-# AJOUT AU PANIER
-# ============================================================
-
-def add_to_cart(
-    session,
-    variant_id,
-    product_title,
-    size,
-    url
-):
-
-    print()
-    print(
-        "🛒 TENTATIVE D'AJOUT AU PANIER"
-    )
-
-    print(
-        f"Produit : {product_title}"
-    )
-
-    print(
-        f"Taille détectée : {size}"
-    )
-
-    print(
-        f"Variant ID : {variant_id}"
-    )
-
-    if not variant_id:
-
-        print(
-            "❌ Variant ID absent"
-        )
-
-        return False
-
-    payload = {
-        "id": int(variant_id),
-        "quantity": 1,
-    }
-
-    try:
-
-        response = session.post(
-            CART_ADD_URL,
-            data=payload,
-            headers={
-                "Accept": (
-                    "application/json"
-                ),
-                "X-Requested-With": (
-                    "XMLHttpRequest"
-                ),
-            },
-            timeout=20,
-        )
-
-        print(
-            f"📡 HTTP ajout panier : "
-            f"{response.status_code}"
-        )
-
-        if response.status_code >= 400:
-
-            print(
-                "❌ Ajout au panier refusé"
+        cart_url = (
+            build_cart_url(
+                variant
             )
-
-            print(
-                response.text[:500]
-            )
-
-            return False
-
-        print(
-            "🟢 Réponse positive du panier"
         )
-
-    except requests.RequestException as error:
-
-        print(
-            f"❌ Erreur ajout panier : "
-            f"{error}"
-        )
-
-        return False
-
-    # --------------------------------------------------------
-    # Vérification réelle du panier
-    # --------------------------------------------------------
-
-    try:
-
-        cart_response = session.get(
-            CART_URL,
-            timeout=20,
-        )
-
-        print(
-            f"📡 HTTP vérification panier : "
-            f"{cart_response.status_code}"
-        )
-
-        cart_response.raise_for_status()
-
-        cart = cart_response.json()
-
-        items = cart.get(
-            "items",
-            []
-        )
-
-        for item in items:
-
-            item_variant_id = str(
-                item.get(
-                    "variant_id",
-                    ""
-                )
-            )
-
-            if item_variant_id == str(
-                variant_id
-            ):
-
-                quantity = item.get(
-                    "quantity",
-                    0
-                )
-
-                print()
-                print(
-                    "✅ PRODUIT CONFIRMÉ "
-                    "DANS LE PANIER"
-                )
-
-                print(
-                    f"📦 Quantité : {quantity}"
-                )
-
-                message = (
-                    "🚨 AWESOME GOD RADAR 🚨\n\n"
-                    "🛒 BLIENTELE — PANIER\n\n"
-                    f"👟 {product_title}\n"
-                    f"📏 Taille : {size}\n"
-                    f"🆔 Variant : {variant_id}\n"
-                    f"📦 Quantité : {quantity}\n\n"
-                    "🟢 Produit ajouté au panier "
-                    "avec succès.\n\n"
-                    f"🔗 Produit : {url}\n"
-                    f"🛒 Panier : {CART_URL}"
-                )
-
-                send_telegram(
-                    message
-                )
-
-                return True
-
-        print(
-            "⚠️ Réponse positive mais "
-            "produit non retrouvé dans /cart.js"
-        )
-
-        return False
-
-    except requests.RequestException as error:
-
-        print(
-            f"⚠️ Impossible de vérifier "
-            f"le panier : {error}"
-        )
-
-        return False
-
-    except ValueError:
-
-        print(
-            "⚠️ Réponse panier non JSON"
-        )
-
-        return False
-
-
-# ============================================================
-# INSPECTION PRODUIT
-# ============================================================
-
-def inspect_product(
-    session,
-    product,
-    state
-):
-
-    title = product.get(
-        "title",
-        ""
-    )
-
-    url = product_url(
-        product
-    )
-
-    print()
-    print(
-        "🚨 PRODUIT POTENTIEL DÉTECTÉ"
-    )
-
-    print(
-        f"Nom : {title}"
-    )
-
-    print(
-        f"Handle : "
-        f"{product.get('handle', '')}"
-    )
-
-    print(
-        f"ID produit : "
-        f"{product.get('id', '')}"
-    )
-
-    print(
-        f"🔗 {url}"
-    )
-
-    targets = find_target_variants(
-        product
-    )
-
-    if not targets:
-
-        print(
-            "⚪ Aucune taille cible "
-            "44,5 / US 10,5 trouvée"
-        )
-
-        return 0
-
-    carted_variants = set(
-        str(value)
-        for value in state.get(
-            "carted_variants",
-            []
-        )
-    )
-
-    actions = 0
-
-    for target in targets:
-
-        variant = target[
-            "variant"
-        ]
-
-        size = target[
-            "size"
-        ]
-
-        variant_id = target[
-            "variant_id"
-        ]
-
-        available = target[
-            "available"
-        ]
 
         print()
+
         print(
-            f"👟 Taille : {size}"
+            f"🎯 Taille : "
+            f"{variant_title}"
         )
 
         print(
-            f"🆔 Variant : "
+            f"🆔 Variant ID : "
             f"{variant_id}"
         )
 
@@ -688,64 +470,99 @@ def inspect_product(
             f"{available}"
         )
 
-        if not available:
+        if available:
 
             print(
-                "🔴 Taille cible "
-                "indisponible"
+                "🟢 TAILLE CIBLE DISPONIBLE"
             )
 
-            continue
+            if cart_url:
 
-        print(
-            "🟢 TAILLE CIBLE DISPONIBLE"
-        )
-
-        if str(variant_id) in carted_variants:
-
-            print(
-                "♻️ Variant déjà traité"
-            )
-
-            continue
-
-        success = add_to_cart(
-            session=session,
-            variant_id=variant_id,
-            product_title=title,
-            size=size,
-            url=url,
-        )
-
-        if success:
-
-            carted_variants.add(
-                str(variant_id)
-            )
-
-            state[
-                "carted_variants"
-            ] = list(
-                carted_variants
-            )
-
-            save_state(
-                state
-            )
-
-            actions += 1
+                print(
+                    f"🛒 URL panier préparée : "
+                    f"{cart_url}"
+                )
 
         else:
 
             print(
-                "⚠️ Ajout panier non confirmé"
+                "🔴 Taille présente "
+                "mais indisponible"
             )
 
-    return actions
+        results.append(
+            {
+                "variant_id": variant_id,
+                "variant_title": variant_title,
+                "available": available,
+                "product_url": url,
+                "cart_url": cart_url,
+            }
+        )
+
+    return results
 
 
 # ============================================================
-# PROGRAMME PRINCIPAL
+# ALERTE
+# ============================================================
+
+def notify_product(
+    product,
+    variant_info
+):
+
+    title = product.get(
+        "title",
+        "Produit"
+    )
+
+    product_url_value = (
+        variant_info["product_url"]
+    )
+
+    cart_url = (
+        variant_info["cart_url"]
+    )
+
+    variant_title = (
+        variant_info["variant_title"]
+    )
+
+    message = (
+        "🚨 AWESOME GOD RADAR 🚨\n\n"
+        "🔥 BLIENTELE\n"
+        "🟢 PRODUIT + TAILLE DÉTECTÉS\n\n"
+        f"👟 {title}\n"
+        f"🎯 Taille : {variant_title}\n\n"
+        "🔗 Produit :\n"
+        f"{product_url_value}\n"
+    )
+
+    if cart_url:
+
+        message += (
+            "\n🛒 Panier préparé :\n"
+            f"{cart_url}\n"
+            "\n⚠️ Vérifie le panier "
+            "et finalise manuellement."
+        )
+
+    else:
+
+        message += (
+            "\n⚠️ Impossible de préparer "
+            "une URL panier avec cette "
+            "structure de variante."
+        )
+
+    send_telegram(
+        message
+    )
+
+
+# ============================================================
+# RADAR
 # ============================================================
 
 def main():
@@ -766,35 +583,42 @@ def main():
     )
 
     print(
-        f"🌐 {PRODUCTS_URL}"
+        "🎯 Surveillance : "
+        "Awesome Gods / Saucony / "
+        "Grid Jazz / S71047-5"
+    )
+
+    print(
+        "🛒 Mode : CART ASSISTANT"
+    )
+
+    print(
+        "🕐 UTC :",
+        datetime.now(
+            timezone.utc
+        ).isoformat()
     )
 
     print()
 
-    state = load_state()
+    memory = load_memory()
 
-    session = create_session()
+    seen_products = set(
+        memory.get(
+            "products",
+            []
+        )
+    )
 
     try:
 
-        products = get_products(
-            session
-        )
+        products = get_products()
 
-    except requests.RequestException as error:
+    except Exception as error:
 
         print(
-            f"❌ Erreur catalogue Blientele : "
-            f"{error}"
-        )
-
-        return
-
-    except ValueError as error:
-
-        print(
-            f"❌ Réponse catalogue invalide : "
-            f"{error}"
+            f"❌ Impossible de lire "
+            f"le catalogue : {error}"
         )
 
         return
@@ -805,83 +629,166 @@ def main():
         f"{len(products)}"
     )
 
-    matches = [
+    if not products:
+
+        print()
+        print(
+            "⚪ Aucun produit actuellement "
+            "présent dans le catalogue."
+        )
+
+        save_memory(
+            memory
+        )
+
+        return
+
+    relevant_products = [
         product
         for product in products
         if product_matches(product)
     ]
 
-    if not matches:
+    print(
+        f"🎯 Produits pertinents : "
+        f"{len(relevant_products)}"
+    )
+
+    if not relevant_products:
 
         print()
         print(
-            "⚪ Aucun produit correspondant"
+            "⚪ Aucun produit cible détecté."
         )
 
-        print()
-        print(
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        )
-        print(
-            "📊 Résultat Blientele"
-        )
-        print(
-            "Aucun produit cible"
-        )
-        print(
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        save_memory(
+            memory
         )
 
         return
 
-    print()
-    print(
-        f"🎯 Produits pertinents : "
-        f"{len(matches)}"
+    for product in relevant_products:
+
+        product_id = str(
+            product.get(
+                "id",
+                product.get(
+                    "handle",
+                    ""
+                )
+            )
+        )
+
+        product_key = (
+            "product:"
+            + product_id
+        )
+
+        variant_results = (
+            inspect_product(
+                product
+            )
+        )
+
+        available_variants = [
+            item
+            for item in variant_results
+            if item.get(
+                "available",
+                False
+            )
+        ]
+
+        # ----------------------------------------------------
+        # NOUVEAU PRODUIT + TAILLE DISPONIBLE
+        # ----------------------------------------------------
+
+        if available_variants:
+
+            for variant_info in (
+                available_variants
+            ):
+
+                variant_key = (
+                    product_key
+                    + ":variant:"
+                    + str(
+                        variant_info.get(
+                            "variant_id"
+                        )
+                    )
+                )
+
+                if variant_key in seen_products:
+
+                    print(
+                        "♻️ Signal déjà envoyé :",
+                        variant_key
+                    )
+
+                    continue
+
+                notify_product(
+                    product,
+                    variant_info
+                )
+
+                seen_products.add(
+                    variant_key
+                )
+
+        # ----------------------------------------------------
+        # MEMORISATION DU PRODUIT
+        # ----------------------------------------------------
+
+        fingerprint = make_id(
+            json.dumps(
+                {
+                    "title": product.get(
+                        "title",
+                        ""
+                    ),
+                    "handle": product.get(
+                        "handle",
+                        ""
+                    ),
+                    "variants": product.get(
+                        "variants",
+                        []
+                    ),
+                },
+                sort_keys=True,
+                default=str,
+            )
+        )
+
+        memory[
+            "fingerprint:"
+            + product_key
+        ] = fingerprint
+
+    memory["products"] = list(
+        seen_products
     )
 
-    total_actions = 0
-
-    for product in matches:
-
-        total_actions += inspect_product(
-            session=session,
-            product=product,
-            state=state,
-        )
+    save_memory(
+        memory
+    )
 
     print()
     print(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
-
     print(
         "📊 Résultat Blientele"
     )
-
     print(
-        f"Produits pertinents : "
-        f"{len(matches)}"
+        f"🎯 Produits cibles : "
+        f"{len(relevant_products)}"
     )
-
     print(
-        f"🛒 Ajouts panier confirmés : "
-        f"{total_actions}"
+        "🛒 Mode : assistance panier"
     )
-
-    if total_actions:
-
-        print(
-            "🚨 PANIER PRÊT"
-        )
-
-    else:
-
-        print(
-            "✅ Aucun nouvel ajout "
-            "au panier"
-        )
-
     print(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -889,3 +796,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
