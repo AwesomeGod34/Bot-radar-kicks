@@ -11,11 +11,9 @@ permissions:
 
 jobs:
   radar:
-
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Recuperer le code
         uses: actions/checkout@v4
 
@@ -34,7 +32,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python bot.py
-          - name: Tester Blientele
+
+      - name: Tester Blientele
         run: |
           python blientele_cart.py
 
