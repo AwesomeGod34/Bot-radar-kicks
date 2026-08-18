@@ -11,6 +11,7 @@ TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 STATE_FILE = Path("seen.json")
+WESTSIDE_ALERTS_FILE = Path("westside_alerts.json")
 
 BASE_URL = "https://www.blientele.com"
 
@@ -68,7 +69,10 @@ HEADERS = {
 # --------------------------------------------------
 
 def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{TOKEN}/sendMessage"
+    )
 
     response = requests.post(
         url,
@@ -84,7 +88,7 @@ def send_telegram(message):
 
 
 # --------------------------------------------------
-# MEMOIRE
+# MEMOIRE PRINCIPALE
 # --------------------------------------------------
 
 def load_seen():
@@ -93,7 +97,9 @@ def load_seen():
 
     try:
         data = json.loads(
-            STATE_FILE.read_text()
+            STATE_FILE.read_text(
+                encoding="utf-8"
+            )
         )
 
         if isinstance(data, list):
@@ -114,7 +120,8 @@ def save_seen(seen):
             seen,
             indent=2,
             ensure_ascii=False
-        )
+        ),
+        encoding="utf-8"
     )
 
 
@@ -125,10 +132,52 @@ def make_id(value):
 
 
 # --------------------------------------------------
+# MEMOIRE WESTSIDE
+# --------------------------------------------------
+
+def load_westside_alerts():
+
+    if not WESTSIDE_ALERTS_FILE.exists():
+        return []
+
+    try:
+        data = json.loads(
+            WESTSIDE_ALERTS_FILE.read_text(
+                encoding="utf-8"
+            )
+        )
+
+        if isinstance(data, list):
+            return data
+
+    except Exception as error:
+
+        print(
+            "⚠️ Erreur lecture Westside alerts :",
+            error
+        )
+
+    return []
+
+
+def save_westside_alerts(alerts):
+
+    WESTSIDE_ALERTS_FILE.write_text(
+        json.dumps(
+            alerts,
+            indent=2,
+            ensure_ascii=False
+        ),
+        encoding="utf-8"
+    )
+
+
+# --------------------------------------------------
 # FILTRES
 # --------------------------------------------------
 
 def relevant(text):
+
     text = text.lower()
 
     return any(
@@ -138,6 +187,7 @@ def relevant(text):
 
 
 def has_no_results(text):
+
     text = text.lower()
 
     phrases = [
@@ -158,6 +208,7 @@ def has_no_results(text):
 
 
 def classify(text):
+
     text = text.lower()
 
     if any(word in text for word in [
@@ -198,6 +249,137 @@ def classify(text):
 
 
 # --------------------------------------------------
+# WESTSIDE GUNN
+# --------------------------------------------------
+
+def send_westside_alerts():
+
+    alerts = load_westside_alerts()
+
+    if not alerts:
+        print("")
+        print(
+            "👤 WESTSIDE GUNN : "
+            "aucun nouveau signal Telegram."
+        )
+        return
+
+    print("")
+    print(
+        "👤 WESTSIDE GUNN :",
+        len(alerts),
+        "signal(s) en attente."
+    )
+
+    remaining = []
+
+    for alert in alerts:
+
+        try:
+
+            priority = alert.get(
+                "priority",
+                "🟡 À SURVEILLER"
+            )
+
+            terms = alert.get(
+                "terms",
+                []
+            )
+
+            excerpt = alert.get(
+                "excerpt",
+                ""
+            )
+
+            url = alert.get(
+                "url",
+                "https://x.com/WESTSIDEGUNN"
+            )
+
+            post_id = alert.get(
+                "post_id",
+                ""
+            )
+
+            detected_at = alert.get(
+                "detected_at",
+                ""
+            )
+
+            terms_text = ", ".join(
+                terms
+            )
+
+            message = (
+                "🚨 AWESOME GOD RADAR 🚨\n\n"
+                "👤 WESTSIDE GUNN\n"
+                f"{priority}\n\n"
+                "🎯 Référence : S71047-5\n"
+                "👟 Sujet : Awesome Gods / Saucony\n\n"
+            )
+
+            if terms_text:
+                message += (
+                    f"🔎 Détection : "
+                    f"{terms_text}\n\n"
+                )
+
+            if excerpt:
+                message += (
+                    "📝 Contenu détecté :\n"
+                    f"{excerpt[:900]}\n\n"
+                )
+
+            if post_id:
+                message += (
+                    f"🆔 Post X : {post_id}\n"
+                )
+
+            if detected_at:
+                message += (
+                    f"🕐 Détection : "
+                    f"{detected_at}\n"
+                )
+
+            message += (
+                "\n🔗 Source :\n"
+                f"{url}"
+            )
+
+            send_telegram(message)
+
+            print(
+                "📲 Alerte Westside envoyée :",
+                post_id or url
+            )
+
+        except Exception as error:
+
+            print(
+                "❌ Erreur envoi Westside :",
+                error
+            )
+
+            # On conserve l'alerte pour un prochain passage.
+            remaining.append(alert)
+
+    save_westside_alerts(
+        remaining
+    )
+
+    if remaining:
+        print(
+            "⚠️ Alertes Westside conservées :",
+            len(remaining)
+        )
+    else:
+        print(
+            "✅ File Westside vidée."
+        )
+
+
+# --------------------------------------------------
 # BLIENTELE
 # --------------------------------------------------
 
@@ -234,7 +416,7 @@ def check_blientele(seen):
             ).lower()
 
             # --------------------------------------
-            # CAS JSON : products.json
+            # CAS JSON
             # --------------------------------------
 
             if "json" in content_type:
@@ -291,11 +473,9 @@ def check_blientele(seen):
                         + variant_text
                     )
 
-                    # Produit totalement hors sujet.
                     if not relevant(combined):
                         continue
 
-                    # Identifiant stable du produit.
                     item_id = (
                         "blientele-product-"
                         + product_id
@@ -317,7 +497,6 @@ def check_blientele(seen):
                         item_id
                     )
 
-                    # Nouveau produit OU modification
                     if previous != fingerprint:
 
                         seen[item_id] = fingerprint
@@ -347,7 +526,6 @@ def check_blientele(seen):
                 strip=True
             )
 
-            # Ignore les recherches vides.
             if has_no_results(page_text):
                 print(
                     "Recherche vide :",
@@ -355,14 +533,8 @@ def check_blientele(seen):
                 )
                 continue
 
-            # --------------------------------------
-            # Détection d'une page directement
-            # --------------------------------------
-
             if relevant(page_text):
 
-                # On ne mémorise pas tout le contenu
-                # de la page comme identifiant.
                 fingerprint = make_id(
                     page_text
                 )
@@ -388,10 +560,6 @@ def check_blientele(seen):
                             page_text[:700],
                         )
                     )
-
-            # --------------------------------------
-            # Détection des liens pertinents
-            # --------------------------------------
 
             for link in soup.find_all(
                 "a",
@@ -420,8 +588,6 @@ def check_blientele(seen):
                 if not relevant(combined):
                     continue
 
-                # On ne garde que les liens
-                # réellement intéressants.
                 if "/products/" not in href:
                     continue
 
@@ -586,24 +752,38 @@ def main():
     print("==============================")
     print("🚨 AWESOME GOD RADAR 🚨")
     print("==============================")
+
     print(
         "UTC :",
         datetime.now(
             timezone.utc
         ).isoformat()
     )
+
     print("")
+
+    # ------------------------------------------------
+    # WESTSIDE GUNN EN PREMIER
+    # ------------------------------------------------
+
+    send_westside_alerts()
+
+    # ------------------------------------------------
+    # BLIENTELE
+    # ------------------------------------------------
 
     new_items = []
 
-    # BLIENTELE EN PREMIER.
     new_items.extend(
         check_blientele(
             seen
         )
     )
 
-    # WEB EN COMPLEMENT.
+    # ------------------------------------------------
+    # WEB
+    # ------------------------------------------------
+
     new_items.extend(
         check_web(
             seen
