@@ -1,67 +1,60 @@
 name: Awesome God Radar
 on:
-schedule:
-- cron: "*/5 * * * *"
-workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
 permissions:
-contents: write
+  contents: write
+
 jobs:
-radar:
-runs-on: ubuntu-latest
-steps:
+  radar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
 
-  - name: Recuperer le code
-    uses: actions/checkout@v4
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-  - name: Installer Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: "3.12"
+      - name: Installer les dependances
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
 
-  - name: Installer les dependances
-    run: |
-      python -m pip install --upgrade pip
-      pip install requests beautifulsoup4
+      - name: Scanner Blientele
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python blientele_cart.py
 
-  - name: Scanner Blientele
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-    run: |
-      python blientele_cart.py
+      - name: Scanner Saucony
+        run: python saucony_radar.py
 
-  - name: Scanner Saucony
-    run: |
-      python saucony_radar.py
+      - name: Scanner EQL
+        run: python eql_radar.py
 
-  - name: Scanner EQL
-    run: |
-      python eql_radar.py
+      - name: Scanner Westside Gunn
+        run: python westside_radar.py
 
-  - name: Scanner Westside Gunn
-    run: |
-      python westside_radar.py
+      - name: Lancer le radar Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python bot.py
 
-  - name: Lancer le radar Telegram
-    env:
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-    run: |
-      python bot.py
+      - name: Sauvegarder les memoires
+        run: |
+          git config user.name "Awesome God Radar"
+          git config user.email "actions@github.com"
 
-  - name: Sauvegarder les memoires
-    run: |
-      git config user.name "Awesome God Radar"
-      git config user.email "actions@github.com"
+          git add seen.json westside_seen.json westside_alerts.json blientele_cart_seen.json
 
-      git add seen.json
-      git add westside_seen.json
-      git add westside_alerts.json
-      git add blientele_cart_seen.json
-
-      if git diff --cached --quiet; then
-        echo "Aucun changement de memoire."
-      else
-        git commit -m "Update radar memory"
-        git push
-      fi
+          if git diff --cached --quiet; then
+            echo "Aucun changement de memoire."
+          else
+            git commit -m "Update radar memory"
+            git push
+          fi
