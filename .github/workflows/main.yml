@@ -14,8 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Récupérer le code
+      - name: Recuperer le code
         uses: actions/checkout@v4
 
       - name: Installer Python
@@ -23,7 +22,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Installer les dépendances
+      - name: Installer les dependances
         run: |
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4
@@ -54,7 +53,7 @@ jobs:
         run: |
           python bot.py
 
-      - name: Sauvegarder les mémoires
+      - name: Sauvegarder les memoires
         run: |
           git config user.name "Awesome God Radar"
           git config user.email "actions@github.com"
@@ -65,7 +64,7 @@ jobs:
           git add blientele_cart_seen.json
 
           if git diff --cached --quiet; then
-            echo "Aucun changement de mémoire à sauvegarder."
+            echo "Aucun changement de memoire."
           else
             git commit -m "Update radar memory"
             git push
